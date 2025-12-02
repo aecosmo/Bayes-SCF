@@ -106,51 +106,6 @@ def covtocl_fast(a, b):
         
     return out
 
-import numpy as np
-"""
-def bin_array(array, nb, k=None, log=False):
-
-    array = np.asarray(array)
-    
-    # ---- Case 1: No k -> simple index binning ----
-    if k is None:
-        n = len(array)
-        bins = np.linspace(0, n, nb+1, dtype=int)
-        out = np.zeros(nb)
-        for i in range(nb):
-            out[i] = np.mean(array[bins[i]:bins[i+1]])
-        return out, None
-
-    # ---- Case 2: k-binning ----
-    k = np.asarray(k)
-
-    # set bin edges
-    if log:
-        # log binning (k must be > 0)
-        kmin = np.min(k[k > 0])
-        edges = np.logspace(np.log10(kmin), np.log10(k.max()), nb+1)
-    else:
-        # linear k binning
-        edges = np.linspace(k.min(), k.max(), nb+1)
-
-    ybin = np.zeros(nb)
-    kbin = np.zeros(nb)
-
-    for i in range(nb):
-        if i < nb-1:
-            mask = (k >= edges[i]) & (k < edges[i+1])
-        else:
-            mask = (k >= edges[i]) & (k <= edges[i+1])
-
-        if np.any(mask):
-            ybin[i] = np.mean(array[mask])
-            kbin[i] = np.mean(k[mask])
-        else:
-            ybin[i] = np.nan
-            kbin[i] = 0.5 * (edges[i] + edges[i+1]) if not log else np.sqrt(edges[i]*edges[i+1])
-
-    return ybin, kbin
-"""
 
 def bin_array(array, nb, k=None, log=False):
 
