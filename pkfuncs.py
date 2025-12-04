@@ -53,138 +53,6 @@ def pk_intp(kv, karr, pkarr): # kv, k-array , pk-array
     y = np.interp(np.log(kv), np.log(karr), np.log(pkarr))
     return np.exp(y) # np.interp(kv, karr, pkarr)
 
-def get_model_pk(kp, kpara, KK, PK):
-    nn = len(kpara)
-    kv = np.zeros(nn)
-    PKm = np.zeros(nn)
-    for jj in range(nn):
-        kv[jj] = np.sqrt(kp**2 + kpara[jj]**2)
-        
-        PKm[jj] =  pk_intp(kv[jj], KK, PK)
-        # PKm[jj] =  np.interp(np.log(kv[jj]), np.log(KK), np.log(PK))
-
-    return kv, PKm
-    
-def get_model_pk_2d(kper, kpara, KK, PK):
-    nc = len(kpara)
-    nell = len(kper)
-    
-    PKm = np.zeros((nell, nc))
-    
-    for ii in range(nell):
-        for jj in range(nc):
-            kv = np.sqrt(kper[ii]**2 + kpara[jj]**2)
-            PKm[ii, jj] =  pk_intp(kv, KK, PK)
-    return PKm
-    
-import numpy as np
-from numpy.fft import ifft
-
-def get_vis(PKm, r, rp, dnuc):
-    """
-    Generate Hermitian-symmetric Fourier coefficients consistent with PKm,
-    so that inverse FFT gives a real brightness-temperature field whose
-    variance follows the desired power-law slope.
-
-    Parameters
-    ----------
-    PKm : array_like
-        1D power spectrum evaluated on the FFT modes (same length as N).
-    r : float
-        Normalization/geometry factor (you are currently using r**2).
-    rp, dnuc : float
-        Currently unused, but can enter into the overall normalization
-        if you want full physical units.
-    """
-    PKm = np.asarray(PKm)
-    N   = PKm.size
-
-    fact = r**2
-
-    randX = np.zeros(N, dtype=np.complex128)
-
-    # ---- DC mode (k = 0), purely real ----
-    randX[0] = np.random.normal() * np.sqrt(PKm[0] / (2.0 * fact))
-
-    # ---- Nyquist mode (only if N is even), purely real ----
-    if N % 2 == 0:
-        randX[N//2] = np.random.normal() * np.sqrt(PKm[N//2] / (2.0 * fact))
-        kmax = N//2
-    else:
-        kmax = (N - 1) // 2 + 1  # last positive k index
-
-    # ---- positive-frequency complex modes and their conjugates ----
-    for k in range(1, kmax):
-        re = np.random.normal()
-        im = np.random.normal()
-        z  = re + 1j * im
-        amp = np.sqrt(PKm[k] / (2.0 * fact))
-        randX[k]  = amp * z
-        randX[-k] = np.conjugate(randX[k])
-
-    # ---- inverse FFT -> real-space brightness temperature along ν ----
-    VX = ifft(randX)  # should be real up to numerical noise
-
-    # If you want exactly real:
-    VX = VX.real
-
-    return VX
-
-
-import numpy as np
-from numpy.fft import ifft
-
-def get_vis_unit(PKm, r, rp, dnuc):
-    """
-    Generate Hermitian-symmetric Fourier coefficients consistent with PKm,
-    so that inverse FFT gives a real brightness-temperature field whose
-    variance follows the desired power-law slope.
-
-    Parameters
-    ----------
-    PKm : array_like
-        1D power spectrum evaluated on the FFT modes (same length as N).
-    r : float
-        Normalization/geometry factor (you are currently using r**2).
-    rp, dnuc : float
-        Currently unused, but can enter into the overall normalization
-        if you want full physical units.
-    """
-    PKm = np.asarray(PKm)
-    PKm = np.ones_like(PKm)
-    N   = PKm.size
-
-    fact = r**2
-
-    randX = np.zeros(N, dtype=np.complex128)
-
-    # ---- DC mode (k = 0), purely real ----
-    randX[0] = np.random.normal() * np.sqrt(PKm[0] / (2.0 * fact))
-
-    # ---- Nyquist mode (only if N is even), purely real ----
-    if N % 2 == 0:
-        randX[N//2] = np.random.normal() * np.sqrt(PKm[N//2] / (2.0 * fact))
-        kmax = N//2
-    else:
-        kmax = (N - 1) // 2 + 1  # last positive k index
-
-    # ---- positive-frequency complex modes and their conjugates ----
-    for k in range(1, kmax):
-        re = np.random.normal()
-        im = np.random.normal()
-        z  = re + 1j * im
-        amp = np.sqrt(PKm[k] / (2.0 * fact))
-        randX[k]  = amp * z
-        randX[-k] = np.conjugate(randX[k])
-
-    # ---- inverse FFT -> real-space brightness temperature along ν ----
-    VX = ifft(randX)  # should be real up to numerical noise
-
-    # If you want exactly real:
-    VX = VX.real
-
-    return VX
-
 
 def covtocl_fast(a, b):
     a = np.asarray(a, dtype=np.complex128)
@@ -269,87 +137,31 @@ def flagdata(nc, mode='MWA', percent = 20):
     return index
 
 
-def spherical_bin_log(kper, kpar, pk2d, Nbin=20, kmin=None, kmax=None):
-    """
-    Log-spaced spherical binning of a 2D power spectrum P(kper, kpar).
+def draw_field_from_power(P_dft, seed=None):
+    rng = np.random.default_rng(seed)
 
-    Parameters
-    ----------
-    kper : 1D array
-        Perpendicular wavenumbers.
-    kpar : 1D array
-        Parallel wavenumbers.
-    pk2d : 2D array (len(kpar), len(kper))
-        Power spectrum on the (kpar, kper) grid.
-    Nbin : int
-        Number of spherical bins.
-    kmin, kmax : float (optional)
-        Range for spherical k. If None, computed from data.
-
-    Returns
-    -------
-    k_bin_center : array
-        Logarithmic spherical k bin centers.
-    pk_1d : array
-        Spherically averaged 1D P(k).
-    counts : array
-        Number of contributing 2D cells in each bin.
-    """
-
-    # Meshgrid of all k-space points
-    KP, KPAR = np.meshgrid(kper, kpar)
-    K = np.sqrt(KP**2 + KPAR**2)
-
-    # Flatten arrays
-    Kflat = K.ravel()
-    PKflat = pk2d.ravel()
-
-    # Define log-spaced bins
-    if kmin is None: kmin = Kflat[Kflat > 0].min()
-    if kmax is None: kmax = Kflat.max()
-
-    edges = np.geomspace(kmin, kmax, Nbin + 1)
-    k_bin_center = np.sqrt(edges[:-1] * edges[1:])  # geometric mean
-
-    # Digitize
-    inds = np.digitize(Kflat, edges) - 1
-
-    # Storage
-    pk_1d = np.zeros(Nbin)
-    counts = np.zeros(Nbin, dtype=int)
-
-    # Loop over bins
-    for i in range(Nbin):
-        mask = inds == i
-        if np.any(mask):
-            pk_1d[i] = np.mean(PKflat[mask])
-            counts[i] = np.sum(mask)
-        else:
-            pk_1d[i] = np.nan  # empty bin
-
-    return k_bin_center, pk_1d, counts
-
-
-def gaussian_field_1d(Pk):
-    """
-    Generate a 1D real Gaussian random field with input power spectrum Pk.
-    """
-    N = len(Pk)
+    N = len(P_dft)
     fk = np.zeros(N, dtype=complex)
 
-    # k=0 (real only)
-    fk[0] = np.sqrt(Pk[0]) * np.random.randn()
+    # k=0 mode
+    fk[0] = 0 * rng.standard_normal() # zero-mean field
 
-    # Nyquist (if even)
+    # Nyquist mode (only if N even)
     if N % 2 == 0:
-        fk[N//2] = np.sqrt(Pk[N//2]) * np.random.randn()
+        fk[N//2] = np.sqrt(P_dft[N//2]/2) * rng.standard_normal()
 
-    # positive frequencies
-    kmax = N//2 if N % 2 == 0 else (N-1)//2
-    for k in range(1, kmax):
-        a, b = np.random.randn(), np.random.randn()
-        fk[k] = np.sqrt(Pk[k]/2) * (a + 1j*b)
-        fk[-k] = fk[k].conjugate()   # Hermitian symmetry
+    # Fill positive + mirrored negative modes
+    for i in range(1, N//2):
+        a, b = rng.standard_normal(), rng.standard_normal()
+        amp = np.sqrt(P_dft[i] / 2)
+        fk[i]  = amp * (a + 1j * b)
+        fk[-i] = np.conjugate(fk[i])
 
-    # inverse FFT -> real field
     return np.fft.ifft(fk).real
+
+
+
+# plot
+import matplotlib.pyplot as plt
+import numpy as np
+
