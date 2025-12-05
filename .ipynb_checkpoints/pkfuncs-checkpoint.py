@@ -117,7 +117,7 @@ def bin_array(array, nb, k=None, log=False):
 
     return ybin, kbin, count
 
-
+"""
 def flagdata(nc, mode='MWA', percent = 20):
     index = np.ones(nc)
     if (mode=='MWA'):
@@ -133,6 +133,59 @@ def flagdata(nc, mode='MWA', percent = 20):
         index[flag] = 0
     else:
         index = np.ones(nc)
+
+    return index
+"""
+
+def flagdata(nc, mode='MWA', percent=20, seed=None):
+    """
+    Generate flag mask for spectral channels.
+
+    Parameters
+    ----------
+    nc : int
+        Number of channels.
+    mode : str
+        'MWA', 'RANDOM', or anything else meaning NOFLAG.
+    percent : float
+        Percentage of channels to randomly flag (only used if mode='RANDOM').
+    seed : int or None
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    index : array
+        Binary mask of shape (nc,), where 0 = flagged, 1 = unflagged.
+    """
+
+    index = np.ones(nc, dtype=float)
+
+    # apply seed only when random mode is used
+    rng = np.random.default_rng(seed) if seed is not None else np.random
+
+    if mode == 'MWA':
+        flag1 = np.array([0, 1, 2, 3, 16, 28, 29, 30, 31], dtype=int)
+        flag = np.concatenate([flag1 + 32 * ii for ii in range(24)])
+        flag = flag[flag < nc]  # safety guard if nc < full pattern
+        index[flag] = 0
+
+    elif mode == 'RANDOM':
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        flag = rng.choice(nc, size=num, replace=False)
+        index[flag] = 0
+        
+    elif mode == 'MWA+RANDOM':
+        
+        flag1 = np.array([0, 1, 2, 3, 16, 28, 29, 30, 31], dtype=int)
+        flag = np.concatenate([flag1 + 32 * ii for ii in range(24)])
+        flag = flag[flag < nc]  # safety guard if nc < full pattern
+        index[flag] = 0
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        flag = rng.choice(nc, size=num, replace=False)
+        index[flag] = 0    
 
     return index
 
@@ -165,72 +218,3 @@ def draw_field_from_power(P_dft, seed=None):
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot_power_with_ratio(k_centers, p_rec_mean, p_rec_err, binned_th,
-                          theory_label='Theory', figsize=(7, 8),
-                          band=True, band_alpha=0.15):
-    """
-    Plot recovered power spectrum vs theory with a ratio subplot.
-
-    Parameters
-    ----------
-    k_centers : array
-        Bin center wavenumbers (k).
-    p_rec_mean : array
-        Mean recovered power spectrum over realizations.
-    p_rec_err : array
-        1σ uncertainty on recovered spectrum.
-    binned_th : array
-        Theoretical prediction evaluated in same bins.
-    theory_label : str, optional
-        Legend label for the theoretical curve.
-    figsize : tuple, optional
-        Matplotlib figure size.
-    band : bool, optional
-        If True, plot ±1σ shaded region in ratio panel.
-    band_alpha : float, optional
-        Transparency of the shaded uncertainty band.
-    """
-
-    # Create figure layout
-    fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.05)
-
-    # ---------------- Top panel ----------------
-    ax1 = fig.add_subplot(gs[0])
-
-    ax1.errorbar(k_centers, abs(p_rec_mean), p_rec_err, 
-                 fmt='o', ls='--', label='Recovered (mean ± error)')
-    ax1.plot(k_centers, binned_th, '-k', lw=2, label=theory_label)
-
-    ax1.set_xscale('log')
-    # ax1.set_yscale('log')
-    ax1.set_ylabel(r'$P(k_\parallel)$')
-    ax1.legend()
-    ax1.grid(alpha=0.3)
-    ax1.tick_params(labelbottom=False)
-
-    # ---------------- Bottom panel ----------------
-    ax2 = fig.add_subplot(gs[1], sharex=ax1)
-
-    # Ratio and fractional uncertainty
-    ratio = p_rec_mean / binned_th - 1
-    ratio_err = p_rec_err / binned_th
-
-    ax2.errorbar(k_centers, 100*ratio, 100*ratio_err, fmt='o-', capsize=4)
-
-    # Zero line
-    ax2.axhline(0, color='k', ls='--')
-
-    # Shaded +/- 1σ band if enabled
-    if band:
-        ax2.fill_between(k_centers, 
-                         -100*ratio_err, 
-                         +100*ratio_err, 
-                         alpha=band_alpha)
-
-    ax2.set_xlabel(r'$k_\parallel$')
-    ax2.set_ylabel('% deviation')
-    # ax2.set_xscale('log')
-    ax2.grid(alpha=0.3)
-
-    return fig, (ax1, ax2)

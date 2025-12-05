@@ -117,7 +117,7 @@ def bin_array(array, nb, k=None, log=False):
 
     return ybin, kbin, count
 
-
+"""
 def flagdata(nc, mode='MWA', percent = 20):
     index = np.ones(nc)
     if (mode=='MWA'):
@@ -133,6 +133,59 @@ def flagdata(nc, mode='MWA', percent = 20):
         index[flag] = 0
     else:
         index = np.ones(nc)
+
+    return index
+"""
+
+def flagdata(nc, mode='MWA', percent=20, seed=None):
+    """
+    Generate flag mask for spectral channels.
+
+    Parameters
+    ----------
+    nc : int
+        Number of channels.
+    mode : str
+        'MWA', 'RANDOM', or anything else meaning NOFLAG.
+    percent : float
+        Percentage of channels to randomly flag (only used if mode='RANDOM').
+    seed : int or None
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    index : array
+        Binary mask of shape (nc,), where 0 = flagged, 1 = unflagged.
+    """
+
+    index = np.ones(nc, dtype=float)
+
+    # apply seed only when random mode is used
+    rng = np.random.default_rng(seed) if seed is not None else np.random
+
+    if mode == 'MWA':
+        flag1 = np.array([0, 1, 2, 3, 16, 28, 29, 30, 31], dtype=int)
+        flag = np.concatenate([flag1 + 32 * ii for ii in range(24)])
+        flag = flag[flag < nc]  # safety guard if nc < full pattern
+        index[flag] = 0
+
+    elif mode == 'RANDOM':
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        flag = rng.choice(nc, size=num, replace=False)
+        index[flag] = 0
+        
+    elif mode == 'MWA+RANDOM':
+        
+        flag1 = np.array([0, 1, 2, 3, 16, 28, 29, 30, 31], dtype=int)
+        flag = np.concatenate([flag1 + 32 * ii for ii in range(24)])
+        flag = flag[flag < nc]  # safety guard if nc < full pattern
+        index[flag] = 0
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        flag = rng.choice(nc, size=num, replace=False)
+        index[flag] = 0    
 
     return index
 

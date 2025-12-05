@@ -1,17 +1,17 @@
 # rc: runtime configuration
 text.usetex : True
-axes.titlesize : 24
-axes.labelsize : 16
+axes.titlesize : 16
+axes.labelsize : 14
 
 
-lines.linewidth : 3
-font.size : 18
+lines.linewidth : 2
+font.size : 14
 font.weight : roman
 font.family : sans-serif
 #font.sans-serif : Liberation Sans
 #font.monospace:  DejaVu Sans Mono
-xtick.labelsize : 16
-ytick.labelsize : 16
+xtick.labelsize : 14
+ytick.labelsize : 14
 xtick.direction: in
 ytick.direction: in
 xtick.bottom: True
