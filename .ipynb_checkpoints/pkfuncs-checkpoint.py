@@ -117,27 +117,8 @@ def bin_array(array, nb, k=None, log=False):
 
     return ybin, kbin, count
 
-"""
-def flagdata(nc, mode='MWA', percent = 20):
-    index = np.ones(nc)
-    if (mode=='MWA'):
-        flag1 = np.array([0, 1, 2, 3, 16, 28,29,30,31], dtype='int64')
-        flag = np.array([], dtype='int64')
-        for ii in range(24):
-            flag = np.append(flag, flag1+32*ii)
-        index[flag] = 0
-    elif (mode=='RANDOM'):
-        num = int(nc*percent/100)
-        num = nc if (num > nc) else num
-        flag = np.random.randint(0, nc, num)
-        index[flag] = 0
-    else:
-        index = np.ones(nc)
 
-    return index
-"""
-
-def flagdata(nc, mode='MWA', percent=20, seed=None):
+def flagdata(nc, mode='PERIODIC', percent=20, seed=None):
     """
     Generate flag mask for spectral channels.
 
@@ -163,7 +144,7 @@ def flagdata(nc, mode='MWA', percent=20, seed=None):
     # apply seed only when random mode is used
     rng = np.random.default_rng(seed) if seed is not None else np.random
 
-    if mode == 'MWA':
+    if mode == 'PERIODIC':
         flag1 = np.array([0, 1, 2, 3, 16, 28, 29, 30, 31], dtype=int)
         flag = np.concatenate([flag1 + 32 * ii for ii in range(24)])
         flag = flag[flag < nc]  # safety guard if nc < full pattern
@@ -175,7 +156,7 @@ def flagdata(nc, mode='MWA', percent=20, seed=None):
         flag = rng.choice(nc, size=num, replace=False)
         index[flag] = 0
         
-    elif mode == 'MWA+RANDOM':
+    elif mode == 'PERIODIC+RANDOM':
         
         flag1 = np.array([0, 1, 2, 3, 16, 28, 29, 30, 31], dtype=int)
         flag = np.concatenate([flag1 + 32 * ii for ii in range(24)])
@@ -214,7 +195,125 @@ def draw_field_from_power(P_dft, seed=None):
 
 
 
-# plot
-import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, Matern
+
+def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
+    
+    x = np.arange(Npoints)[:, None]
+
+    # FIXED length scale (no optimization!)
+    kernel = amplitude * RBF(length_scale=length_scale) # Matern(length_scale=1.0, nu=1.5)
+    gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
+
+    # # Fit GP to zero data to define structure (mean=0)
+    # gp.fit(x, np.zeros(Npoints))
+
+    # Sample from prior covariance
+    samples = gp.sample_y(x, n_samples=Nreal).T
+    
+    return samples
+
+def smooth_vcg(aa, NW):
+    # bb = np.ones(NN)/NN
+    NN = 2*NW+1
+    win = np.hanning(NN)
+    #win = np.kaiser(NN, 14)
+    
+    aas = np.convolve(aa, win, mode='valid')  
+    
+    V = aa.copy()
+    V[V!=0.] = 1.
+    Vs = np.convolve(V, win, mode='valid') 
+#     print(V.shape, Vs.shape)
+    aas = aas/Vs
+    bb = aa[NW:-NW]
+    aas[bb==0.] = 0.
+    return aas
+
+def smooth_gpr_controlled(aa, NN):
+
+    x = np.arange(len(aa))[:,None]
+    m = aa != 0
+    y = aa[m]
+
+    # FIXED length scale (no optimization!)
+    kernel = 1.0 * RBF(length_scale=NN) # Matern(length_scale=1.0, nu=1.5)
+    gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
+
+    gp.fit(x[m], y)
+    y_pred = gp.predict(x)
+
+    # keep original zeros
+    y_pred[~m] = 0
+    return y_pred
+
+
+def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
+    """
+    Linearly bin a recovered power spectrum and theoretical model.
+
+    Parameters
+    ----------
+    n1 : int
+        Start index of valid k-values.
+    nend : int
+        End index (exclusive).
+    k_abs : array
+        Full k-array.
+    pk_recovered : array (Nrea x N)
+        Recovered power spectra per realization.
+    P_cont : array (N)
+        Continuous theoretical power spectrum.
+    NB : int
+        Number of linear bins.
+
+    Returns
+    -------
+    k_centers : array
+        Linear bin centers.
+    p_rec_mean : array
+        Mean binned recovered spectrum.
+    p_rec_err : array
+        Standard error (std / sqrt(Nrea)).
+    binned_th : array
+        Binned theoretical spectrum.
+    bins : array
+        Bin edges used.
+    """
+
+    # Extract relevant region
+    # k_vals = k_abs[n1:nend]
+    Nrea = pk_recovered.shape[0]
+
+    # Linear binning
+    bins = np.linspace(k_vals.min(), k_vals.max(), NB + 1)
+    k_centers = 0.5 * (bins[:-1] + bins[1:])
+
+    # Storage
+    binned_rec = np.full((Nrea, NB), np.nan)
+
+    # ---- Bin each realization ----
+    for i in range(Nrea):
+        pk_slice = pk_recovered[i, n1:nend]
+        for j in range(NB):
+            mask = (k_vals >= bins[j]) & (k_vals < bins[j+1])
+            if np.any(mask):
+                binned_rec[i, j] = np.mean(pk_slice[mask])
+
+    # Ensemble stats
+    p_rec_mean = np.nanmean(binned_rec, axis=0)
+    p_rec_err  = np.nanstd(binned_rec, axis=0) / np.sqrt(Nrea)
+
+    # ---- Bin theory ----
+    binned_th = np.full(NB, np.nan)
+    th_slice = P_theory[n1:nend]
+
+    for j in range(NB):
+        mask = (k_vals >= bins[j]) & (k_vals < bins[j+1])
+        if np.any(mask):
+            binned_th[j] = np.mean(th_slice[mask])
+
+    return k_centers, p_rec_mean, p_rec_err, binned_th, bins
 

@@ -1,5 +1,6 @@
 # rc: runtime configuration
 text.usetex : True
+
 axes.titlesize : 16
 axes.labelsize : 14
 
