@@ -360,21 +360,20 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50):
     return fields_orig, fields_flag, ml
 
 
-def save_dct(fname_prefix, inp_signal, flag, scf, method,
-             kb_dct, mean_dct, err_dct, binned_th_dct):
+def save_dct(fname_prefix, inp_signal, flag, SCF,
+             kb, mean, err, binned_th):
 
-    fname = f"{fname_prefix}_inp_signal-{inp_signal}_flag-{flag}_scf-{scf}_method-{method}.npz"
+    fname = f"{fname_prefix}_inp_signal-{inp_signal}_flag-{flag}_SCF-{SCF}.npz"
 
     np.savez(
         fname,
-        kb_dct=kb_dct,
-        mean_dct=mean_dct,
-        err_dct=err_dct,
-        binned_th_dct=binned_th_dct,
+        kb=kb,
+        mean=mean,
+        err=err,
+        binned_th=binned_th,
         inp_signal=inp_signal,
         flag=flag,
-        scf=scf,
-        method=method
+        SCF=SCF
     )
 
     print("Saved:", fname)
