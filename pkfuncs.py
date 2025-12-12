@@ -119,25 +119,6 @@ def bin_array(array, nb, k=None, log=False):
 
 
 def flagdata(nc, mode='PERIODIC', percent=20, seed=None):
-    """
-    Generate flag mask for spectral channels.
-
-    Parameters
-    ----------
-    nc : int
-        Number of channels.
-    mode : str
-        'MWA', 'RANDOM', or anything else meaning NOFLAG.
-    percent : float
-        Percentage of channels to randomly flag (only used if mode='RANDOM').
-    seed : int or None
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    index : array
-        Binary mask of shape (nc,), where 0 = flagged, 1 = unflagged.
-    """
 
     index = np.ones(nc, dtype=float)
 
@@ -219,7 +200,7 @@ def smooth_vcg(aa, NW):
     # bb = np.ones(NN)/NN
     NN = 2*NW+1
     win = np.hanning(NN)
-    #win = np.kaiser(NN, 14)
+    #win = np.kaiser(NN, 14) # kaiser is similar to dpss 
     
     aas = np.convolve(aa, win, mode='valid')  
     
@@ -238,14 +219,14 @@ def smooth_gpr_controlled(aa, NN):
     m = aa != 0
     y = aa[m]
 
-    # FIXED length scale (no optimization!)
+    # FIXED length scale
     kernel = 1.0 * RBF(length_scale=NN) # Matern(length_scale=1.0, nu=1.5)
     gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
 
     gp.fit(x[m], y)
     y_pred = gp.predict(x)
 
-    # keep original zeros
+    # keep original flags
     y_pred[~m] = 0
     return y_pred
 
@@ -316,4 +297,86 @@ def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
             binned_th[j] = np.mean(th_slice[mask])
 
     return k_centers, p_rec_mean, p_rec_err, binned_th, bins
+
+def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50):
+    """
+    Process fields according to the chosen SCF scheme: 'GP', 'Hann', or 'None'.
+
+    Parameters
+    ----------
+    fields_tota : ndarray
+        Array of input realizations with shape (n_realizations, n_samples).
+    flag : ndarray
+        Flag array (same length as fields_tota realizations).
+    SCF : str
+        One of {'GP', 'Hann', 'None'}.
+    pfunc : module/object
+        Object containing smoothing and covtocl_fast functions.
+    NN_gp : int
+        Smoothing window/scale for GP.
+    NN_hann : int
+        Smoothing window/scale for Hann.
+
+    Returns
+    -------
+    fields_orig : ndarray
+        Original (unsmoothed - smoothed) fields after SCF processing.
+    fields_flag : ndarray
+        fields_orig multiplied by the (possibly trimmed) flag.
+    ml : ndarray
+        Separation-count array from covtocl_fast.
+    """
+
+    if SCF == 'GP':
+        NN = NN_gp
+        fields_smth = np.array([
+            smooth_gpr_controlled(realization, NN)
+            for realization in fields_tota
+        ])
+        fields_orig = fields_tota - fields_smth
+        fields_flag = fields_orig * flag
+        ml = covtocl_fast(flag, flag)
+
+    elif SCF == 'Hann':
+        NN = NN_hann
+        fields_smth = np.array([
+            smooth_vcg(realization, NN)
+            for realization in fields_tota
+        ])
+        # Trim edges
+        fields_orig = fields_tota[:, NN:-NN] - fields_smth
+        trimmed_flag = flag[NN:-NN]
+        fields_flag = fields_orig * trimmed_flag
+        ml = covtocl_fast(trimmed_flag, trimmed_flag)
+
+    elif SCF == 'None':
+        fields_orig = fields_tota
+        fields_flag = fields_orig * flag
+        ml = covtocl_fast(flag, flag)
+
+    else:
+        raise ValueError("SCF must be one of {'GP', 'Hann', 'None'}")
+
+    return fields_orig, fields_flag, ml
+
+
+def save_dct(fname_prefix, inp_signal, flag, scf, method,
+             kb_dct, mean_dct, err_dct, binned_th_dct):
+
+    fname = f"{fname_prefix}_inp_signal-{inp_signal}_flag-{flag}_scf-{scf}_method-{method}.npz"
+
+    np.savez(
+        fname,
+        kb_dct=kb_dct,
+        mean_dct=mean_dct,
+        err_dct=err_dct,
+        binned_th_dct=binned_th_dct,
+        inp_signal=inp_signal,
+        flag=flag,
+        scf=scf,
+        method=method
+    )
+
+    print("Saved:", fname)
+    return fname
 
