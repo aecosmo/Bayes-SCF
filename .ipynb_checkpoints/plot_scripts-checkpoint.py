@@ -48,6 +48,8 @@ def plot_compare_estimators(
 
     if title:
         ax1.set_title(title)
+        # ax1.set_title(title, x=0.1, y=0.9)
+        # y=0.98
 
     # ============================================================
     # Prepare ratios (same as before)
