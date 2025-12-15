@@ -2,7 +2,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 def plot_compare_estimators(
         k_fft, mean_fft, err_fft, binned_th_fft,
         k_dct, mean_dct, err_dct, binned_th_dct,
@@ -16,7 +15,7 @@ def plot_compare_estimators(
         figname='compare_estimators.pdf',
         fft_color='C0', dct_color='C1',
         band=True, band_alpha=0.15,
-        ylim=None, clip_symbol=True):
+        ylim=None, clip_symbol=True, verticle=False, vline=0.2):
 
     fig = plt.figure(figsize=figsize)
 
@@ -133,6 +132,12 @@ def plot_compare_estimators(
 
     ax_dct.set_xlabel(r'$k_\parallel\,{\rm Mpc}^{-1}$')
 
+    if (verticle==True):
+        ax1.axvline(vline, ls='--', color='gray')
+        ax_dct.axvline(vline, ls='--', color='gray')
+        ax_fft.axvline(vline, ls='--', color='gray')
+        
+
     fig.align_ylabels()
 
     if save:
@@ -140,3 +145,4 @@ def plot_compare_estimators(
         print("Saved:", figname)
 
     return fig, (ax1, ax_fft, ax_dct)
+
