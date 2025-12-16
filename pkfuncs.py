@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import scipy
 from scipy.signal import windows
-from scipy.fftpack import fft, ifft, dct
+from scipy.fftpack import fft, ifft, dct, idct
+
 
 # Cosmological parameters: (Planck 2018)
 H0 = 67.66 # km / (Mpc s)
@@ -359,8 +360,44 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50):
 
     return fields_orig, fields_flag, ml
 
+def pk_fft(fields_flag, L, N):
+    pk_recovered = []
+    
+    for field in fields_flag:
+        field = field - np.mean(field)
+        fk = np.fft.fft(field)
+        pk_fft = (L / N**2) * (fk * fk.conjugate()).real
+        pk_recovered.append(pk_fft)
+        
+    pk_recovered = np.array(pk_recovered)
+    pk_recovered_fft = pk_recovered
+    return pk_recovered_fft
 
-def save_dct(fname_prefix, inp_signal, flag, SCF,
+def pk_dct(fields_flag, dL, ml, M, r, w):
+    pk_recovered = []
+    cl_recovered = []
+    for field in fields_flag:
+        field = field - np.mean(field)
+        cl_full = covtocl_fast(field, field)/ml
+        # cl_full -= np.mean(cl_full)
+    
+        # Use only M-terms of the correlation:
+        cl = cl_full[:M]             # shape (M,)
+        
+    
+        # --- DCT estimator (discrete Wiener–Khinchin for half-corr, cosine basis) ---
+        pk_dct = dL * idct(cl.real * w, type=1)
+        pk_recovered.append(pk_dct)
+        cl_recovered.append(cl)
+    
+    pk_recovered_dct = np.array(pk_recovered)   # shape (Nrea, M)
+    
+    Omi = 1/(4*np.pi*r**2)
+    cl_recovered = np.array(cl_recovered)*Omi   # shape (Nrea, M)
+
+    return pk_recovered_dct, cl_recovered
+
+def save_data(fname_prefix, inp_signal, flag, SCF,
              kb, mean, err, binned_th):
 
     fname = f"{fname_prefix}_inp_signal-{inp_signal}_flag-{flag}_SCF-{SCF}.npz"
@@ -376,6 +413,6 @@ def save_dct(fname_prefix, inp_signal, flag, SCF,
         SCF=SCF
     )
 
-    print("Saved:", fname)
+    # print("Saved:", fname)
     return fname
 
