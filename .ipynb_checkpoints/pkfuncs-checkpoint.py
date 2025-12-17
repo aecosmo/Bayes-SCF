@@ -4,7 +4,7 @@ from matplotlib.colors import LogNorm
 import scipy
 from scipy.signal import windows
 from scipy.fftpack import fft, ifft, dct, idct
-
+from scipy import integrate
 
 # Cosmological parameters: (Planck 2018)
 H0 = 67.66 # km / (Mpc s)
@@ -416,3 +416,27 @@ def save_data(fname_prefix, inp_signal, flag, SCF,
     # print("Saved:", fname)
     return fname
 
+"""
+def pk_intp(kv, karr, pkarr): # kv, k-array , pk-array
+    y = np.interp(np.log(kv), np.log(karr), np.log(pkarr))
+    return np.exp(y) # np.interp(kv, karr, pkarr)
+
+
+def pk2cl(x, rp, dn, kp, dnuc, karr, pkarr): # x: kpara-array, dn: ndnu, kp:kper, dnuc:dnuc.
+    kv = np.sqrt(kp**2 + x**2)
+    y = np.cos(x*rp*dn) * pk_intp(kv, karr, pkarr) * np.power(np.sinc(x*rp*dnuc/(2.*np.pi)), 2.) 
+    # less than 1% change at dnu=0 when sinc is omitted.
+    return y
+
+
+# Predicted Signal in a grid
+def clHI(r, rp, kperp, dnu, karr, pkarr): # cl for 21 cm signal.
+    nc, dnuc = len(dnu), dnu[1]
+    cl21 = np.zeros(nc)
+    x = np.linspace(0, 100*kperp, 10000)
+    for jj in range(nc):
+        cl21[jj] = integrate.simpson(pk2cl(x, rp, dnu[jj], kperp, dnuc, karr, pkarr), x)/(np.pi*r**2)
+            
+    return cl21
+
+"""
