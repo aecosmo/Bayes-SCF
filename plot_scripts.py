@@ -10,7 +10,7 @@ def plot_compare_estimators(
         dct_label=r'${\rm Fourier\, transform \, of \, C_\ell(\Delta\nu)}$',
         fft_dev_label=r'\rm{FFT\ deviation\ (\%)}',      # NEW
         dct_dev_label=r'\rm{DCT\ deviation\ (\%)}',      # NEW
-        figsize=(7, 10),
+        figsize=(7, 8),
         title=None, save=True,
         figname='compare_estimators.pdf',
         fft_color='C0', dct_color='C1',
@@ -30,11 +30,11 @@ def plot_compare_estimators(
     ax1 = fig.add_subplot(gs[0])
 
     fft_line = ax1.errorbar(k_fft, np.abs(mean_fft), err_fft, color=fft_color,
-                            fmt='o', ls='--', label=fft_label)
+                            fmt='o', ms=4, elinewidth=1, ls='--', label=fft_label)          
     fft_color = fft_line[0].get_color()
 
     dct_line = ax1.errorbar(k_dct, np.abs(mean_dct), err_dct, color=dct_color,
-                            fmt='s', ls='--', label=dct_label)
+                            fmt='s', ms=4, elinewidth=1, ls='--', label=dct_label)
     dct_color = dct_line[0].get_color()
 
     ax1.plot(k_fft, binned_th_fft, '-k', lw=2, label=theory_label)
@@ -63,7 +63,7 @@ def plot_compare_estimators(
     # ===== Helper for clipped symbols =====
     def plot_clipped(ax, k, y, dy, marker, label, color=None):
         if ylim is None:
-            ax.errorbar(k, y, dy, fmt=marker, capsize=4,
+            ax.errorbar(k, y, dy, fmt=marker, capsize=1,  ms=4, elinewidth=1,
                         label=label, color=color)
             return
 
@@ -73,7 +73,7 @@ def plot_compare_estimators(
 
         if np.any(mask_in):
             line = ax.errorbar(k[mask_in], y[mask_in], dy[mask_in],
-                               fmt=marker, capsize=3, label=label,
+                               fmt=marker, capsize=1,  ms=4, elinewidth=1, label=label,
                                color=color)
             c = line[0].get_color()
         else:
