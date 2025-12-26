@@ -233,37 +233,6 @@ def smooth_gpr_controlled(aa, NN):
 
 
 def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
-    """
-    Linearly bin a recovered power spectrum and theoretical model.
-
-    Parameters
-    ----------
-    n1 : int
-        Start index of valid k-values.
-    nend : int
-        End index (exclusive).
-    k_abs : array
-        Full k-array.
-    pk_recovered : array (Nrea x N)
-        Recovered power spectra per realization.
-    P_cont : array (N)
-        Continuous theoretical power spectrum.
-    NB : int
-        Number of linear bins.
-
-    Returns
-    -------
-    k_centers : array
-        Linear bin centers.
-    p_rec_mean : array
-        Mean binned recovered spectrum.
-    p_rec_err : array
-        Standard error (std / sqrt(Nrea)).
-    binned_th : array
-        Binned theoretical spectrum.
-    bins : array
-        Bin edges used.
-    """
 
     # Extract relevant region
     # k_vals = k_abs[n1:nend]
@@ -364,7 +333,7 @@ def pk_fft(fields_flag, L, N):
     pk_recovered = []
     
     for field in fields_flag:
-        field = field - np.mean(field)
+        # field = field # - np.mean(field)
         fk = np.fft.fft(field)
         pk_fft = (L / N**2) * (fk * fk.conjugate()).real
         pk_recovered.append(pk_fft)
@@ -377,7 +346,7 @@ def pk_dct(fields_flag, dL, ml, M, r, w):
     pk_recovered = []
     cl_recovered = []
     for field in fields_flag:
-        field = field - np.mean(field)
+        # field = field - np.mean(field)*0
         cl_full = covtocl_fast(field, field)/ml
         # cl_full -= np.mean(cl_full)
     
