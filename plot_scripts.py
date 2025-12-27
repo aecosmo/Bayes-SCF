@@ -42,7 +42,7 @@ def plot_compare_estimators(
 
     ax1.set_yscale('log')
     ax1.set_ylabel(r'$P(k_\parallel)\,{\rm mK}^2\, {\rm Mpc}^3$')
-    ax1.grid(alpha=0.3)
+    # ax1.grid(alpha=0.3)
     ax1.legend()
     ax1.tick_params(labelbottom=False)
 
@@ -105,7 +105,7 @@ def plot_compare_estimators(
     ax_fft.axhline(0, color='k', ls='--')
     # ax_fft.set_ylabel(r'\rm{FFT deviation (\%)}')
     ax_fft.set_ylabel(fft_dev_label)     # NEW
-    ax_fft.grid(alpha=0.3)
+    # ax_fft.grid(alpha=0.3)
     ax_fft.tick_params(labelbottom=False)
 
     if ylim is not None:
