@@ -201,7 +201,7 @@ import numpy as np
 import george
 from george import kernels
 
-def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
+def generate_gp_realizations1(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
     x = np.arange(Npoints)[:, None]
 
     # 1. Define Kernel with UNIT variance (1.0)
@@ -242,6 +242,40 @@ def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_t
 
     return scaled_samples # Transpose to match (Npoints, Nreal) if needed
 
+import numpy as np
+import george
+from george import kernels
+
+def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0, seed=None):
+    # Set the seed if provided
+    if seed is not None:
+        np.random.seed(seed)
+    
+    x = np.arange(Npoints)[:, None]
+
+    # 1. Define Kernel with UNIT variance (1.0)
+    metric = length_scale**2
+    
+    if kernel_type == "RBF":
+        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
+    elif kernel_type == "Matern32":
+        kernel = 1.0 * kernels.Matern32Kernel(metric=metric)
+    else:
+        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
+
+    # 2. Setup GP
+    gp = george.GP(kernel)
+
+    # 3. Precompute
+    gp.compute(x, yerr=1e-8) 
+
+    # 4. Sample Unit Variance
+    unit_samples = gp.sample(x, size=Nreal)
+    
+    # 5. Apply Amplitude
+    scaled_samples = unit_samples * np.sqrt(amplitude)
+
+    return scaled_samples
 
 def smooth_vcg(aa, NW):
     # bb = np.ones(NN)/NN
@@ -343,8 +377,8 @@ def smooth_gpr_controlled(aa, NN):
     gp.set_parameter_vector(results.x)
     
     # Print learned amplitudes 
-    amps = np.exp(results.x)
-    print(f"Learned Ratios -> Smooth: {amps[0]:.3f}, Fast: {amps[1]:.3f}")
+    # amps = np.exp(results.x)
+    # print(f"Learned Ratios -> Smooth: {amps[0]:.3f}, Fast: {amps[1]:.3f}")
 
     # --- Decomposition & Prediction ---
     
