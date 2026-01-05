@@ -181,7 +181,7 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern
 
-def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
+def generate_gp_realizations_skl(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
     
     x = np.arange(Npoints)[:, None]
 
@@ -196,6 +196,52 @@ def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_t
     samples = gp.sample_y(x, n_samples=Nreal).T
     
     return samples
+
+import numpy as np
+import george
+from george import kernels
+
+def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
+    x = np.arange(Npoints)[:, None]
+
+    # 1. Define Kernel with UNIT variance (1.0)
+    # This keeps the matrix values nice and small (~1.0)
+    metric = length_scale**2
+    
+    if kernel_type == "RBF":
+        # Note: Using 1.0 here, not 'amplitude'
+        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
+    elif kernel_type == "Matern32":
+        kernel = 1.0 * kernels.Matern32Kernel(metric=metric)
+    else:
+        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
+
+    # 2. Setup GP
+    gp = george.GP(kernel)
+
+    # 3. Precompute
+    # Now yerr=1e-10 is effective because the signal is 1.0
+    gp.compute(x, yerr=1e-8) 
+
+    # 4. Sample Unit Variance
+    # shape: (Nreal, Npoints)
+    unit_samples = gp.sample(x, size=Nreal)
+    
+    # 5. Apply Amplitude Here
+    # If 'amplitude' is the Variance (K_0), multiply by sqrt(amplitude)
+    # If 'amplitude' is the Standard Deviation, multiply by amplitude.
+    # Based on your variable name, I assume you want the values to scale by 'amplitude'.
+    # Note: If your kernel definition was k = A * exp(...), then A is variance.
+    # So we multiply samples by sqrt(A).
+    
+    # Assuming 'amplitude' input is the VARIANCE factor (standard in GP kernels):
+    scaled_samples = unit_samples * np.sqrt(amplitude)
+    
+    # If 'amplitude' input is actually STD DEV (e.g. 1e12 Kelvin), use:
+    # scaled_samples = unit_samples * amplitude
+
+    return scaled_samples # Transpose to match (Npoints, Nreal) if needed
+
 
 def smooth_vcg(aa, NW):
     # bb = np.ones(NN)/NN
@@ -214,7 +260,7 @@ def smooth_vcg(aa, NW):
     aas[bb==0.] = 0.
     return aas
 
-def smooth_gpr_controlled(aa, NN):
+def smooth_gpr_controlled_incorrect(aa, NN): # simple, works, but mathematically incorrect # it works because of the jitter included in the GP implementation.
 
     x = np.arange(len(aa))[:,None]
     m = aa != 0
@@ -230,6 +276,101 @@ def smooth_gpr_controlled(aa, NN):
     # keep original flags
     y_pred[~m] = 0
     return y_pred
+
+
+import numpy as np
+import george
+from george import kernels
+import scipy.optimize as op
+
+def smooth_gpr_controlled(aa, NN):
+    x = np.arange(len(aa))[:, None]
+    m = aa != 0
+    y_raw = aa[m]
+
+    # --- Normalize Data ---
+    y_mean = np.mean(y_raw)
+    y_std = np.std(y_raw)
+    y_norm = (y_raw - y_mean) / y_std
+
+    # --- Define Kernels ---
+    # Initial guess: 80% smooth, 20% fast
+    # Since data is normalized (variance ~ 1.0), these should sum to ~1.0
+    initial_amp_smooth = 0.8
+    initial_amp_fast = 0.2
+    
+    k_smooth_base = kernels.ExpSquaredKernel(metric=NN**2)
+    k_fast_base   = kernels.Matern32Kernel(metric=1.0**2)
+    
+    # George automatically converts these floats to ConstantKernels (amplitudes)
+    kernel = initial_amp_smooth * k_smooth_base + initial_amp_fast * k_fast_base
+
+    # --- Setup GP ---
+    gp = george.GP(kernel, mean=0.0, fit_mean=False)
+    
+    # Compute factorization on NORMALIZED data
+    # yerr=1e-5 is relative to a signal of size ~1.0 
+    gp.compute(x[m], yerr=1e-5)
+
+    # --- Optimization Loop ---
+    # Freeze everything that isn't a "log_constant" (amplitude)
+    for name in gp.get_parameter_names():
+        if "metric" in name:
+            gp.freeze_parameter(name)
+            
+    # -- WRAPPERS FOR SCIPY --
+    
+    # Objective Function (Negative Log Likelihood)
+    def nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        ll = gp.log_likelihood(y_norm, quiet=True)
+        return -ll if np.isfinite(ll) else 1e25
+
+    # Gradient Function (Negative Gradient)
+    def grad_nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        return -gp.grad_log_likelihood(y_norm, quiet=True)
+
+    # Run the optimizer
+    p0 = gp.get_parameter_vector()
+    
+    # Pass wrapper functions
+    results = op.minimize(nll, p0, jac=grad_nll, method="L-BFGS-B")
+    
+    # Update GP with best parameters
+    gp.set_parameter_vector(results.x)
+    
+    # Print learned amplitudes 
+    amps = np.exp(results.x)
+    print(f"Learned Ratios -> Smooth: {amps[0]:.3f}, Fast: {amps[1]:.3f}")
+
+    # --- Decomposition & Prediction ---
+    
+    # Calculate weights based on NORMALIZED data
+    # y_norm needs to be shape (N,), apply_inverse handles the rest
+    weights = gp.solver.apply_inverse(y_norm[:, None])[:, 0]
+    
+    # Extract the Smooth Kernel component
+    k_smooth_fitted = gp.kernel.k1
+    
+    # Project weights using ONLY the smooth kernel
+    # Pass 2D arrays: x (target) and x[m] (source)
+    K_star_smooth = k_smooth_fitted.get_value(x, x[m])
+    
+    # prediction in "normalized units"
+    y_pred_norm = K_star_smooth.dot(weights)
+
+    # --- De-normalize ---
+    # Scale back to original units
+    y_pred = y_pred_norm * y_std + y_mean
+    
+    # Restore missing channels to 0 
+    y_pred[~m] = 0 
+    
+    return y_pred
+
 
 
 def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
@@ -335,13 +476,22 @@ def pk_fft(fields_flag, L, N):
     for field in fields_flag:
         # field = field # - np.mean(field)
         fk = np.fft.fft(field)
-        pk_fft = (L / N**2) * (fk * fk.conjugate()).real
+        # pk_fft = (L / N**2) * (fk * fk.conjugate()).real
+        pk_fft = (1 / L) * (fk * fk.conjugate()).real
         pk_recovered.append(pk_fft)
         
     pk_recovered = np.array(pk_recovered)
     pk_recovered_fft = pk_recovered
     return pk_recovered_fft
 
+# returns A for a cos transform 
+def calc_A(Na, Nb):
+    A=np.outer(np.arange(Na),np.arange(Nb))
+    A=np.cos(np.pi*A/(Nb-1.))
+    A[:,0]=0.5*A[:,0]
+    A[:,Nb-1]=0.5*A[:,Nb-1]
+    return A
+    
 def pk_dct(fields_flag, dL, ml, M, r, w):
     pk_recovered = []
     cl_recovered = []
@@ -352,10 +502,14 @@ def pk_dct(fields_flag, dL, ml, M, r, w):
     
         # Use only M-terms of the correlation:
         cl = cl_full[:M]             # shape (M,)
-        
     
-        # --- DCT estimator (discrete Wiener–Khinchin for half-corr, cosine basis) ---
-        pk_dct = dL * idct(cl.real * w, type=1)
+        # --- DCT estimator (discrete Wiener–Khinchin, cosine basis) ---
+        pk_dct = idct(cl.real * w, type=1)/dL # dL = N * (L / N**2) 
+        
+        # A = calc_A(M, M)    
+        # X = np.linalg.inv(A)
+        # pk_dct = (M-1) * X@(w*cl.real)/dL
+        
         pk_recovered.append(pk_dct)
         cl_recovered.append(cl)
     

@@ -41,7 +41,7 @@ def plot_compare_estimators(
     ax1.plot(k_dct, binned_th_dct, '-k', lw=2)
 
     ax1.set_yscale('log')
-    ax1.set_ylabel(r'$P(k_\parallel)\,{\rm mK}^2\, {\rm Mpc}^3$')
+    ax1.set_ylabel(r'$P(k_\parallel)\,{\rm mK}^2\, {\rm Mpc}$')
     # ax1.grid(alpha=0.3)
     ax1.legend()
     ax1.tick_params(labelbottom=False)
