@@ -164,7 +164,7 @@ def draw_field_from_power(P_dft, seed=None):
 
     # Nyquist mode (only if N even)
     if N % 2 == 0:
-        fk[N//2] = np.sqrt(P_dft[N//2]/2) * rng.standard_normal()
+        fk[N//2] = np.sqrt(P_dft[N//2]) * rng.standard_normal()
 
     # Fill positive + mirrored negative modes
     for i in range(1, N//2):
@@ -174,7 +174,6 @@ def draw_field_from_power(P_dft, seed=None):
         fk[-i] = np.conjugate(fk[i])
 
     return np.fft.ifft(fk).real
-
 
 
 import numpy as np
@@ -510,8 +509,8 @@ def pk_fft(fields_flag, L, N):
     for field in fields_flag:
         # field = field # - np.mean(field)
         fk = np.fft.fft(field)
-        # pk_fft = (L / N**2) * (fk * fk.conjugate()).real
-        pk_fft = (1 / L) * (fk * fk.conjugate()).real
+        pk_fft = (L / N**2) * (fk * fk.conjugate()).real
+        # pk_fft = (1 / L) * (fk * fk.conjugate()).real
         pk_recovered.append(pk_fft)
         
     pk_recovered = np.array(pk_recovered)
@@ -538,7 +537,7 @@ def pk_dct(fields_flag, dL, ml, M, r, w):
         cl = cl_full[:M]             # shape (M,)
     
         # --- DCT estimator (discrete Wiener–Khinchin, cosine basis) ---
-        pk_dct = idct(cl.real * w, type=1)/dL # dL = N * (L / N**2) 
+        pk_dct = idct(cl.real * w, type=1) * dL # dL = N * (L / N**2) 
         
         # A = calc_A(M, M)    
         # X = np.linalg.inv(A)
