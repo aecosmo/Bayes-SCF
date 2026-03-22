@@ -7,7 +7,7 @@ def plot_compare_estimators(
         k_dct, mean_dct, err_dct, binned_th_dct,
         theory_label=r'${\rm EoR\,Model}$',
         fft_label=r'${\rm Delay\,spectrum\,squared}$',
-        dct_label=r'${\rm Fourier\, transform \, of \, C_\ell(\Delta\nu)}$',
+        dct_label=r'${\rm Fourier\, transform \, of \, C(\Delta\nu)}$',
         fft_dev_label=r'\rm{FFT\ deviation\ (\%)}',      # NEW
         dct_dev_label=r'\rm{DCT\ deviation\ (\%)}',      # NEW
         figsize=(7, 8),

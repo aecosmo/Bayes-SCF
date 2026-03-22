@@ -176,7 +176,6 @@ def draw_field_from_power(P_dft, seed=None):
     return np.fft.ifft(fk).real
 
 
-
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern
