@@ -177,71 +177,6 @@ def draw_field_from_power(P_dft, seed=None):
 
 
 import numpy as np
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern
-
-def generate_gp_realizations_skl(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
-    
-    x = np.arange(Npoints)[:, None]
-
-    # FIXED length scale (no optimization!)
-    kernel = amplitude * RBF(length_scale=length_scale) # Matern(length_scale=1.0, nu=1.5)
-    gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
-
-    # # Fit GP to zero data to define structure (mean=0)
-    # gp.fit(x, np.zeros(Npoints))
-
-    # Sample from prior covariance
-    samples = gp.sample_y(x, n_samples=Nreal).T
-    
-    return samples
-
-import numpy as np
-import george
-from george import kernels
-
-def generate_gp_realizations1(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
-    x = np.arange(Npoints)[:, None]
-
-    # 1. Define Kernel with UNIT variance (1.0)
-    # This keeps the matrix values nice and small (~1.0)
-    metric = length_scale**2
-    
-    if kernel_type == "RBF":
-        # Note: Using 1.0 here, not 'amplitude'
-        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
-    elif kernel_type == "Matern32":
-        kernel = 1.0 * kernels.Matern32Kernel(metric=metric)
-    else:
-        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
-
-    # 2. Setup GP
-    gp = george.GP(kernel)
-
-    # 3. Precompute
-    # Now yerr=1e-10 is effective because the signal is 1.0
-    gp.compute(x, yerr=1e-8) 
-
-    # 4. Sample Unit Variance
-    # shape: (Nreal, Npoints)
-    unit_samples = gp.sample(x, size=Nreal)
-    
-    # 5. Apply Amplitude Here
-    # If 'amplitude' is the Variance (K_0), multiply by sqrt(amplitude)
-    # If 'amplitude' is the Standard Deviation, multiply by amplitude.
-    # Based on your variable name, I assume you want the values to scale by 'amplitude'.
-    # Note: If your kernel definition was k = A * exp(...), then A is variance.
-    # So we multiply samples by sqrt(A).
-    
-    # Assuming 'amplitude' input is the VARIANCE factor (standard in GP kernels):
-    scaled_samples = unit_samples * np.sqrt(amplitude)
-    
-    # If 'amplitude' input is actually STD DEV (e.g. 1e12 Kelvin), use:
-    # scaled_samples = unit_samples * amplitude
-
-    return scaled_samples # Transpose to match (Npoints, Nreal) if needed
-
-import numpy as np
 import george
 from george import kernels
 
@@ -292,23 +227,6 @@ def smooth_vcg(aa, NW):
     bb = aa[NW:-NW]
     aas[bb==0.] = 0.
     return aas
-
-def smooth_gpr_controlled_incorrect(aa, NN): # simple, works, but mathematically incorrect # it works because of the jitter included in the GP implementation.
-
-    x = np.arange(len(aa))[:,None]
-    m = aa != 0
-    y = aa[m]
-
-    # FIXED length scale
-    kernel = 1.0 * RBF(length_scale=NN) # Matern(length_scale=1.0, nu=1.5)
-    gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
-
-    gp.fit(x[m], y)
-    y_pred = gp.predict(x)
-
-    # keep original flags
-    y_pred[~m] = 0
-    return y_pred
 
 
 import numpy as np
