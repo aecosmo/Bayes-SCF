@@ -177,71 +177,6 @@ def draw_field_from_power(P_dft, seed=None):
 
 
 import numpy as np
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern
-
-def generate_gp_realizations_skl(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
-    
-    x = np.arange(Npoints)[:, None]
-
-    # FIXED length scale (no optimization!)
-    kernel = amplitude * RBF(length_scale=length_scale) # Matern(length_scale=1.0, nu=1.5)
-    gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
-
-    # # Fit GP to zero data to define structure (mean=0)
-    # gp.fit(x, np.zeros(Npoints))
-
-    # Sample from prior covariance
-    samples = gp.sample_y(x, n_samples=Nreal).T
-    
-    return samples
-
-import numpy as np
-import george
-from george import kernels
-
-def generate_gp_realizations1(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0):
-    x = np.arange(Npoints)[:, None]
-
-    # 1. Define Kernel with UNIT variance (1.0)
-    # This keeps the matrix values nice and small (~1.0)
-    metric = length_scale**2
-    
-    if kernel_type == "RBF":
-        # Note: Using 1.0 here, not 'amplitude'
-        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
-    elif kernel_type == "Matern32":
-        kernel = 1.0 * kernels.Matern32Kernel(metric=metric)
-    else:
-        kernel = 1.0 * kernels.ExpSquaredKernel(metric=metric)
-
-    # 2. Setup GP
-    gp = george.GP(kernel)
-
-    # 3. Precompute
-    # Now yerr=1e-10 is effective because the signal is 1.0
-    gp.compute(x, yerr=1e-8) 
-
-    # 4. Sample Unit Variance
-    # shape: (Nreal, Npoints)
-    unit_samples = gp.sample(x, size=Nreal)
-    
-    # 5. Apply Amplitude Here
-    # If 'amplitude' is the Variance (K_0), multiply by sqrt(amplitude)
-    # If 'amplitude' is the Standard Deviation, multiply by amplitude.
-    # Based on your variable name, I assume you want the values to scale by 'amplitude'.
-    # Note: If your kernel definition was k = A * exp(...), then A is variance.
-    # So we multiply samples by sqrt(A).
-    
-    # Assuming 'amplitude' input is the VARIANCE factor (standard in GP kernels):
-    scaled_samples = unit_samples * np.sqrt(amplitude)
-    
-    # If 'amplitude' input is actually STD DEV (e.g. 1e12 Kelvin), use:
-    # scaled_samples = unit_samples * amplitude
-
-    return scaled_samples # Transpose to match (Npoints, Nreal) if needed
-
-import numpy as np
 import george
 from george import kernels
 
@@ -293,29 +228,13 @@ def smooth_vcg(aa, NW):
     aas[bb==0.] = 0.
     return aas
 
-def smooth_gpr_controlled_incorrect(aa, NN): # simple, works, but mathematically incorrect # it works because of the jitter included in the GP implementation.
-
-    x = np.arange(len(aa))[:,None]
-    m = aa != 0
-    y = aa[m]
-
-    # FIXED length scale
-    kernel = 1.0 * RBF(length_scale=NN) # Matern(length_scale=1.0, nu=1.5)
-    gp = GaussianProcessRegressor(kernel=kernel, optimizer=None)
-
-    gp.fit(x[m], y)
-    y_pred = gp.predict(x)
-
-    # keep original flags
-    y_pred[~m] = 0
-    return y_pred
-
 
 import numpy as np
 import george
 from george import kernels
 import scipy.optimize as op
 
+"""
 def smooth_gpr_controlled(aa, NN):
     x = np.arange(len(aa))[:, None]
     m = aa != 0
@@ -403,7 +322,7 @@ def smooth_gpr_controlled(aa, NN):
     y_pred[~m] = 0 
     
     return y_pred
-
+"""
 
 
 def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
@@ -572,27 +491,231 @@ def save_data(fname_prefix, inp_signal, flag, SCF,
     # print("Saved:", fname)
     return fname
 
-"""
-def pk_intp(kv, karr, pkarr): # kv, k-array , pk-array
-    y = np.interp(np.log(kv), np.log(karr), np.log(pkarr))
-    return np.exp(y) # np.interp(kv, karr, pkarr)
+def smooth_gpr_controlled1(aa, NN):
+    x = np.arange(len(aa))[:, None]
+    m = aa != 0
+    y_raw = aa[m]
+
+    # --- Normalize Data ---
+    y_mean = np.mean(y_raw)
+    y_std = np.std(y_raw)
+    y_norm = (y_raw - y_mean) / y_std
+
+    # --- Define Kernels ---
+    # Initial guess: 80% smooth, 20% fast
+    # Since data is normalized (variance ~ 1.0), these should sum to ~1.0
+    initial_amp_smooth = 1
+    initial_amp_fast = 1
+    
+    k_smooth_base = kernels.ExpSquaredKernel(metric=NN**2)
+    k_fast_base   = kernels.Matern32Kernel(metric=1.0**2)
 
 
-def pk2cl(x, rp, dn, kp, dnuc, karr, pkarr): # x: kpara-array, dn: ndnu, kp:kper, dnuc:dnuc.
-    kv = np.sqrt(kp**2 + x**2)
-    y = np.cos(x*rp*dn) * pk_intp(kv, karr, pkarr) * np.power(np.sinc(x*rp*dnuc/(2.*np.pi)), 2.) 
-    # less than 1% change at dnu=0 when sinc is omitted.
-    return y
+    
+    # George automatically converts these floats to ConstantKernels (amplitudes)
+    kernel = initial_amp_smooth * k_smooth_base + initial_amp_fast * k_fast_base 
+
+    # --- Setup GP ---
+    gp = george.GP(kernel, mean=0.0, fit_mean=False) # , white_noise=np.log(0.05**2), fit_white_noise=False)
+    
+    
+    gp.compute(x[m], yerr=1e-5)
 
 
-# Predicted Signal in a grid
-def clHI(r, rp, kperp, dnu, karr, pkarr): # cl for 21 cm signal.
-    nc, dnuc = len(dnu), dnu[1]
-    cl21 = np.zeros(nc)
-    x = np.linspace(0, 100*kperp, 10000)
-    for jj in range(nc):
-        cl21[jj] = integrate.simpson(pk2cl(x, rp, dnu[jj], kperp, dnuc, karr, pkarr), x)/(np.pi*r**2)
+    for name in gp.get_parameter_names():
+
+        # freeze ONLY smooth length scale
+        if "k1:metric" in name:
+            gp.freeze_parameter(name)
             
-    return cl21
+    # -- WRAPPERS FOR SCIPY --
+    
+    # Objective Function (Negative Log Likelihood)
+    def nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        ll = gp.log_likelihood(y_norm, quiet=True)
+        return -ll if np.isfinite(ll) else 1e25
 
-"""
+    # Gradient Function (Negative Gradient)
+    def grad_nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        return -gp.grad_log_likelihood(y_norm, quiet=True)
+
+    # Run the optimizer
+    p0 = gp.get_parameter_vector()
+    
+    # Pass wrapper functions
+    results = op.minimize(nll, p0, jac=grad_nll, method="L-BFGS-B")
+    
+    # Update GP with best parameters
+    gp.set_parameter_vector(results.x)
+    
+    # Print learned amplitudes 
+    # amps = np.exp(results.x)
+    # print(f"Learned Ratios -> Smooth: {amps[0]:.3f}, Fast: {amps[1]:.3f}")
+
+    # --- Decomposition & Prediction ---
+    
+    # Calculate weights based on NORMALIZED data
+    # y_norm needs to be shape (N,), apply_inverse handles the rest
+    weights = gp.solver.apply_inverse(y_norm[:, None])[:, 0]
+    
+    # Extract the Smooth Kernel component
+    k_smooth_fitted = gp.kernel.k1
+    
+    # Project weights using ONLY the smooth kernel
+    # Pass 2D arrays: x (target) and x[m] (source)
+    K_star_smooth = k_smooth_fitted.get_value(x, x[m])
+    
+    # prediction in "normalized units"
+    y_pred_norm = K_star_smooth.dot(weights)
+
+    # --- De-normalize ---
+    # Scale back to original units
+    y_pred = y_pred_norm * y_std + y_mean
+    
+    # Restore missing channels to 0 
+    y_pred[~m] = 0 
+    
+    return y_pred
+
+def smooth_gpr_controlled(aa, NN, verbose=True):
+    x = np.arange(len(aa))[:, None]
+    m = aa != 0
+    y_raw = aa[m]
+
+    # --- Normalize Data ---
+    y_mean = np.mean(y_raw)
+    y_std = np.std(y_raw)
+    y_norm = (y_raw - y_mean) / y_std
+
+    # --- Define Kernels ---
+    # Initial guess: 80% smooth, 20% fast
+    # Since data is normalized (variance ~ 1.0), these should sum to ~1.0
+    initial_amp_smooth = 1
+    initial_amp_fast = 1
+    
+    k_smooth_base = kernels.ExpSquaredKernel(metric=NN**2)
+    k_fast_base   = kernels.Matern32Kernel(metric=1.0**2)
+
+    kernel = initial_amp_smooth * k_smooth_base + initial_amp_fast * k_fast_base 
+
+    # --- Setup GP ---
+    gp = george.GP(kernel, mean=0.0, fit_mean=False) # , white_noise=np.log(0.05**2), fit_white_noise=False)
+    
+    gp.compute(x[m], yerr=1e-5)
+
+
+    # freeze ONLY smooth length scale
+    for name in gp.get_parameter_names():
+        if "k1:metric" in name:
+            gp.freeze_parameter(name)
+    
+    # ---- bounds ----
+    bounds = []
+    
+    for name in gp.get_parameter_names():
+
+        if "k2:metric" in name:
+            bounds.append((np.log(1.0**2), np.log(NN**2)))
+        else:
+            bounds.append((None, None))
+    
+    print(bounds)
+    
+    # optimize
+    p0 = gp.get_parameter_vector()
+
+    # -- WRAPPERS FOR SCIPY --
+    
+    # Objective Function (Negative Log Likelihood)
+    def nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        ll = gp.log_likelihood(y_norm, quiet=True)
+        return -ll if np.isfinite(ll) else 1e25
+
+    # Gradient Function (Negative Gradient)
+    def grad_nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        return -gp.grad_log_likelihood(y_norm, quiet=True)
+
+    
+    results = op.minimize(
+        nll,
+        p0,
+        jac=grad_nll,
+        method="L-BFGS-B",
+        bounds=bounds
+    )    
+
+    
+    # Update GP with best parameters
+    gp.set_parameter_vector(results.x)
+    
+    if verbose == True:
+        print("\n--- GP FIT SUMMARY ---")
+        
+        print("Optimizer success:", results.success)
+        print("Message:", results.message)
+        
+        print("\nParameter values:")
+        for name, val in zip(gp.get_parameter_names(), gp.get_parameter_vector()):
+            print(f"{name:25s} = {np.exp(val):.4f}  (log={val:.3f})")
+        
+        # identify components explicitly
+        pars = dict(zip(gp.get_parameter_names(), gp.get_parameter_vector()))
+        
+        amp_smooth = np.exp(pars["kernel:k1:k1:log_constant"]) 
+        amp_fast   = np.exp(pars["kernel:k2:k1:log_constant"])
+        
+        ell_smooth = np.sqrt(np.exp(pars["kernel:k1:k2:metric:log_M_0_0"]))
+        ell_fast   = np.sqrt(np.exp(pars["kernel:k2:k2:metric:log_M_0_0"]))
+        
+        print("\nDerived quantities:")
+        print(f"smooth amplitude        = {amp_smooth:.4f}")
+        print(f"fast amplitude          = {amp_fast:.4f}")
+        print(f"smooth length-scale     = {ell_smooth:.2f} (fixed)")
+        print(f"fast length-scale       = {ell_fast:.2f}")
+        
+        print("\nScale ratio diagnostics:")
+        print(f"ell_fast / NN           = {ell_fast/NN:.3f}")
+        print(f"amp_smooth / amp_fast   = {amp_smooth/amp_fast:.3f}")
+        
+        print("\nLikelihood diagnostics:")
+        print(f"log L final             = {-results.fun:.4f}")
+        
+        print("\nParameter bounds check:")
+        print(f"fast length-scale within [1, NN]?  {1 <= ell_fast <= NN}")
+        
+        
+        print("----------------------\n")
+
+
+    # --- Decomposition & Prediction ---
+    
+    # Calculate weights based on NORMALIZED data
+    # y_norm needs to be shape (N,), apply_inverse handles the rest
+    weights = gp.solver.apply_inverse(y_norm[:, None])[:, 0]
+    
+    # Extract the Smooth Kernel component
+    k_smooth_fitted = gp.kernel.k1
+    
+    # Project weights using ONLY the smooth kernel
+    # Pass 2D arrays: x (target) and x[m] (source)
+    K_star_smooth = k_smooth_fitted.get_value(x, x[m])
+    
+    # prediction in "normalized units"
+    y_pred_norm = K_star_smooth.dot(weights)
+
+    # --- De-normalize ---
+    # Scale back to original units
+    y_pred = y_pred_norm * y_std + y_mean
+    
+    # Restore missing channels to 0 
+    y_pred[~m] = 0 
+    
+    return y_pred
