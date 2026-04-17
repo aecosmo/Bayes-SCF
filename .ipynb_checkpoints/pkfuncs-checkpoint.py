@@ -491,6 +491,7 @@ def save_data(fname_prefix, inp_signal, flag, SCF,
     # print("Saved:", fname)
     return fname
 
+"""
 def smooth_gpr_controlled1(aa, NN):
     x = np.arange(len(aa))[:, None]
     m = aa != 0
@@ -580,8 +581,9 @@ def smooth_gpr_controlled1(aa, NN):
     y_pred[~m] = 0 
     
     return y_pred
+"""
 
-def smooth_gpr_controlled(aa, NN, verbose=True):
+def smooth_gpr_controlled(aa, NN, verbose=False):
     x = np.arange(len(aa))[:, None]
     m = aa != 0
     y_raw = aa[m]
@@ -610,7 +612,7 @@ def smooth_gpr_controlled(aa, NN, verbose=True):
 
     # freeze ONLY smooth length scale
     for name in gp.get_parameter_names():
-        if "k1:metric" in name:
+        if "kernel:k1:k2:metric:log_M_0_0" in name:
             gp.freeze_parameter(name)
     
     # ---- bounds ----
@@ -618,7 +620,7 @@ def smooth_gpr_controlled(aa, NN, verbose=True):
     
     for name in gp.get_parameter_names():
 
-        if "k2:metric" in name:
+        if "kernel:k2:k2:metric:log_M_0_0" in name:
             bounds.append((np.log(1.0**2), np.log(NN**2)))
         else:
             bounds.append((None, None))
@@ -672,18 +674,18 @@ def smooth_gpr_controlled(aa, NN, verbose=True):
         amp_smooth = np.exp(pars["kernel:k1:k1:log_constant"]) 
         amp_fast   = np.exp(pars["kernel:k2:k1:log_constant"])
         
-        ell_smooth = np.sqrt(np.exp(pars["kernel:k1:k2:metric:log_M_0_0"]))
+        #ell_smooth = np.sqrt(np.exp(pars["kernel:k1:k2:metric:log_M_0_0"]))
         ell_fast   = np.sqrt(np.exp(pars["kernel:k2:k2:metric:log_M_0_0"]))
         
         print("\nDerived quantities:")
         print(f"smooth amplitude        = {amp_smooth:.4f}")
         print(f"fast amplitude          = {amp_fast:.4f}")
-        print(f"smooth length-scale     = {ell_smooth:.2f} (fixed)")
+        #print(f"smooth length-scale     = {ell_smooth:.2f} (fixed)")
         print(f"fast length-scale       = {ell_fast:.2f}")
         
         print("\nScale ratio diagnostics:")
         print(f"ell_fast / NN           = {ell_fast/NN:.3f}")
-        print(f"amp_smooth / amp_fast   = {amp_smooth/amp_fast:.3f}")
+        #print(f"amp_smooth / amp_fast   = {amp_smooth/amp_fast:.3f}")
         
         print("\nLikelihood diagnostics:")
         print(f"log L final             = {-results.fun:.4f}")
