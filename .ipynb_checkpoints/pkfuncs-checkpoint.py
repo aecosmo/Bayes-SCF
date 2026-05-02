@@ -5,6 +5,7 @@ import scipy
 from scipy.signal import windows
 from scipy.fftpack import fft, ifft, dct, idct
 from scipy import integrate
+import os
 
 # Cosmological parameters: (Planck 2018)
 H0 = 67.66 # km / (Mpc s)
@@ -234,107 +235,30 @@ import george
 from george import kernels
 import scipy.optimize as op
 
-"""
-def smooth_gpr_controlled(aa, NN):
-    x = np.arange(len(aa))[:, None]
-    m = aa != 0
-    y_raw = aa[m]
 
-    # --- Normalize Data ---
-    y_mean = np.mean(y_raw)
-    y_std = np.std(y_raw)
-    y_norm = (y_raw - y_mean) / y_std
-
-    # --- Define Kernels ---
-    # Initial guess: 80% smooth, 20% fast
-    # Since data is normalized (variance ~ 1.0), these should sum to ~1.0
-    initial_amp_smooth = 0.8
-    initial_amp_fast = 0.2
-    
-    k_smooth_base = kernels.ExpSquaredKernel(metric=NN**2)
-    k_fast_base   = kernels.Matern32Kernel(metric=1.0**2)
-    
-    # George automatically converts these floats to ConstantKernels (amplitudes)
-    kernel = initial_amp_smooth * k_smooth_base + initial_amp_fast * k_fast_base
-
-    # --- Setup GP ---
-    gp = george.GP(kernel, mean=0.0, fit_mean=False)
-    
-    # Compute factorization on NORMALIZED data
-    # yerr=1e-5 is relative to a signal of size ~1.0 
-    gp.compute(x[m], yerr=1e-5)
-
-    # --- Optimization Loop ---
-    # Freeze everything that isn't a "log_constant" (amplitude)
-    for name in gp.get_parameter_names():
-        if "metric" in name:
-            gp.freeze_parameter(name)
-            
-    # -- WRAPPERS FOR SCIPY --
-    
-    # Objective Function (Negative Log Likelihood)
-    def nll(p):
-        gp.set_parameter_vector(p)
-        # Use y_norm here
-        ll = gp.log_likelihood(y_norm, quiet=True)
-        return -ll if np.isfinite(ll) else 1e25
-
-    # Gradient Function (Negative Gradient)
-    def grad_nll(p):
-        gp.set_parameter_vector(p)
-        # Use y_norm here
-        return -gp.grad_log_likelihood(y_norm, quiet=True)
-
-    # Run the optimizer
-    p0 = gp.get_parameter_vector()
-    
-    # Pass wrapper functions
-    results = op.minimize(nll, p0, jac=grad_nll, method="L-BFGS-B")
-    
-    # Update GP with best parameters
-    gp.set_parameter_vector(results.x)
-    
-    # Print learned amplitudes 
-    # amps = np.exp(results.x)
-    # print(f"Learned Ratios -> Smooth: {amps[0]:.3f}, Fast: {amps[1]:.3f}")
-
-    # --- Decomposition & Prediction ---
-    
-    # Calculate weights based on NORMALIZED data
-    # y_norm needs to be shape (N,), apply_inverse handles the rest
-    weights = gp.solver.apply_inverse(y_norm[:, None])[:, 0]
-    
-    # Extract the Smooth Kernel component
-    k_smooth_fitted = gp.kernel.k1
-    
-    # Project weights using ONLY the smooth kernel
-    # Pass 2D arrays: x (target) and x[m] (source)
-    K_star_smooth = k_smooth_fitted.get_value(x, x[m])
-    
-    # prediction in "normalized units"
-    y_pred_norm = K_star_smooth.dot(weights)
-
-    # --- De-normalize ---
-    # Scale back to original units
-    y_pred = y_pred_norm * y_std + y_mean
-    
-    # Restore missing channels to 0 
-    y_pred[~m] = 0 
-    
-    return y_pred
-"""
-
-
-def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
+def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB, binn='lin'):
 
     # Extract relevant region
     # k_vals = k_abs[n1:nend]
     Nrea = pk_recovered.shape[0]
 
-    # Linear binning
-    bins = np.linspace(k_vals.min(), k_vals.max(), NB + 1)
-    k_centers = 0.5 * (bins[:-1] + bins[1:])
 
+
+    if binn=='log':
+        # Ensure positivity
+        k_min = k_vals[k_vals > 0].min()
+        k_max = k_vals.max()
+        
+        # Log-spaced bins
+        bins = np.logspace(np.log10(k_min), np.log10(k_max), NB + 1)
+        
+        # Geometric centers (important for log bins)
+        k_centers = np.sqrt(bins[:-1] * bins[1:])
+        
+    else: # linear bin
+        bins = np.linspace(k_vals.min(), k_vals.max(), NB + 1)
+        k_centers = 0.5 * (bins[:-1] + bins[1:])
+    
     # Storage
     binned_rec = np.full((Nrea, NB), np.nan)
 
@@ -361,7 +285,7 @@ def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB):
 
     return k_centers, p_rec_mean, p_rec_err, binned_th, bins
 
-def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50):
+def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50, verbose=False):
     """
     Process fields according to the chosen SCF scheme: 'GP', 'Hann', or 'None'.
 
@@ -392,10 +316,38 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50):
 
     if SCF == 'GP':
         NN = NN_gp
-        fields_smth = np.array([
-            smooth_gpr_controlled(realization, NN)
-            for realization in fields_tota
-        ])
+    
+        if verbose:
+            fields_smth_list = []
+            fit_summaries = []
+    
+            for i, realization in enumerate(fields_tota):
+                y_pred, summary = smooth_gpr_controlled(realization, NN, verbose=verbose)
+    
+                fields_smth_list.append(y_pred)
+    
+                if summary is not None:
+                    summary["realization"] = i
+                    summary["NN"] = NN
+                    fit_summaries.append(summary)
+    
+            fields_smth = np.array(fields_smth_list)
+    
+            # ---- SAVE per NN ----
+
+            save_dir = "gpfit"
+            os.makedirs(save_dir, exist_ok=True)
+            
+            np.savez(
+                os.path.join(save_dir, f"gp_fit_summaries_NN_{NN}.npz"),
+                summaries=np.array(fit_summaries, dtype=object)
+            )
+        else:
+            fields_smth = np.array([
+                smooth_gpr_controlled(realization, NN, verbose=verbose)
+                for realization in fields_tota
+            ])            
+            
         fields_orig = fields_tota - fields_smth
         fields_flag = fields_orig * flag
         ml = covtocl_fast(flag, flag)
@@ -473,9 +425,10 @@ def pk_dct(fields_flag, dL, ml, M, r, w):
     return pk_recovered_dct, cl_recovered
 
 def save_data(fname_prefix, inp_signal, flag, SCF,
-             kb, mean, err, binned_th):
+             kb, mean, err, binned_th, fname=None):
 
-    fname = f"{fname_prefix}_inp_signal-{inp_signal}_flag-{flag}_SCF-{SCF}.npz"
+    if fname==None:
+        fname = f"{fname_prefix}_inp_signal-{inp_signal}_flag-{flag}_SCF-{SCF}.npz"
 
     np.savez(
         fname,
@@ -491,8 +444,8 @@ def save_data(fname_prefix, inp_signal, flag, SCF,
     # print("Saved:", fname)
     return fname
 
-"""
-def smooth_gpr_controlled1(aa, NN):
+
+def smooth_gpr_controlled(aa, NN, verbose=True):
     x = np.arange(len(aa))[:, None]
     m = aa != 0
     y_raw = aa[m]
@@ -503,99 +456,7 @@ def smooth_gpr_controlled1(aa, NN):
     y_norm = (y_raw - y_mean) / y_std
 
     # --- Define Kernels ---
-    # Initial guess: 80% smooth, 20% fast
-    # Since data is normalized (variance ~ 1.0), these should sum to ~1.0
-    initial_amp_smooth = 1
-    initial_amp_fast = 1
-    
-    k_smooth_base = kernels.ExpSquaredKernel(metric=NN**2)
-    k_fast_base   = kernels.Matern32Kernel(metric=1.0**2)
-
-
-    
-    # George automatically converts these floats to ConstantKernels (amplitudes)
-    kernel = initial_amp_smooth * k_smooth_base + initial_amp_fast * k_fast_base 
-
-    # --- Setup GP ---
-    gp = george.GP(kernel, mean=0.0, fit_mean=False) # , white_noise=np.log(0.05**2), fit_white_noise=False)
-    
-    
-    gp.compute(x[m], yerr=1e-5)
-
-
-    for name in gp.get_parameter_names():
-
-        # freeze ONLY smooth length scale
-        if "k1:metric" in name:
-            gp.freeze_parameter(name)
-            
-    # -- WRAPPERS FOR SCIPY --
-    
-    # Objective Function (Negative Log Likelihood)
-    def nll(p):
-        gp.set_parameter_vector(p)
-        # Use y_norm here
-        ll = gp.log_likelihood(y_norm, quiet=True)
-        return -ll if np.isfinite(ll) else 1e25
-
-    # Gradient Function (Negative Gradient)
-    def grad_nll(p):
-        gp.set_parameter_vector(p)
-        # Use y_norm here
-        return -gp.grad_log_likelihood(y_norm, quiet=True)
-
-    # Run the optimizer
-    p0 = gp.get_parameter_vector()
-    
-    # Pass wrapper functions
-    results = op.minimize(nll, p0, jac=grad_nll, method="L-BFGS-B")
-    
-    # Update GP with best parameters
-    gp.set_parameter_vector(results.x)
-    
-    # Print learned amplitudes 
-    # amps = np.exp(results.x)
-    # print(f"Learned Ratios -> Smooth: {amps[0]:.3f}, Fast: {amps[1]:.3f}")
-
-    # --- Decomposition & Prediction ---
-    
-    # Calculate weights based on NORMALIZED data
-    # y_norm needs to be shape (N,), apply_inverse handles the rest
-    weights = gp.solver.apply_inverse(y_norm[:, None])[:, 0]
-    
-    # Extract the Smooth Kernel component
-    k_smooth_fitted = gp.kernel.k1
-    
-    # Project weights using ONLY the smooth kernel
-    # Pass 2D arrays: x (target) and x[m] (source)
-    K_star_smooth = k_smooth_fitted.get_value(x, x[m])
-    
-    # prediction in "normalized units"
-    y_pred_norm = K_star_smooth.dot(weights)
-
-    # --- De-normalize ---
-    # Scale back to original units
-    y_pred = y_pred_norm * y_std + y_mean
-    
-    # Restore missing channels to 0 
-    y_pred[~m] = 0 
-    
-    return y_pred
-"""
-
-def smooth_gpr_controlled(aa, NN, verbose=False):
-    x = np.arange(len(aa))[:, None]
-    m = aa != 0
-    y_raw = aa[m]
-
-    # --- Normalize Data ---
-    y_mean = np.mean(y_raw)
-    y_std = np.std(y_raw)
-    y_norm = (y_raw - y_mean) / y_std
-
-    # --- Define Kernels ---
-    # Initial guess: 80% smooth, 20% fast
-    # Since data is normalized (variance ~ 1.0), these should sum to ~1.0
+    # Initial guess: 80% smooth, 20% fast maybe, or just initiate with something
     initial_amp_smooth = 1
     initial_amp_fast = 1
     
@@ -608,7 +469,6 @@ def smooth_gpr_controlled(aa, NN, verbose=False):
     gp = george.GP(kernel, mean=0.0, fit_mean=False) # , white_noise=np.log(0.05**2), fit_white_noise=False)
     
     gp.compute(x[m], yerr=1e-5)
-
 
     # freeze ONLY smooth length scale
     for name in gp.get_parameter_names():
@@ -625,13 +485,12 @@ def smooth_gpr_controlled(aa, NN, verbose=False):
         else:
             bounds.append((None, None))
     
-    print(bounds)
+    # print(bounds)
     
     # optimize
     p0 = gp.get_parameter_vector()
 
     # -- WRAPPERS FOR SCIPY --
-    
     # Objective Function (Negative Log Likelihood)
     def nll(p):
         gp.set_parameter_vector(p)
@@ -657,44 +516,6 @@ def smooth_gpr_controlled(aa, NN, verbose=False):
     
     # Update GP with best parameters
     gp.set_parameter_vector(results.x)
-    
-    if verbose == True:
-        print("\n--- GP FIT SUMMARY ---")
-        
-        print("Optimizer success:", results.success)
-        print("Message:", results.message)
-        
-        print("\nParameter values:")
-        for name, val in zip(gp.get_parameter_names(), gp.get_parameter_vector()):
-            print(f"{name:25s} = {np.exp(val):.4f}  (log={val:.3f})")
-        
-        # identify components explicitly
-        pars = dict(zip(gp.get_parameter_names(), gp.get_parameter_vector()))
-        
-        amp_smooth = np.exp(pars["kernel:k1:k1:log_constant"]) 
-        amp_fast   = np.exp(pars["kernel:k2:k1:log_constant"])
-        
-        #ell_smooth = np.sqrt(np.exp(pars["kernel:k1:k2:metric:log_M_0_0"]))
-        ell_fast   = np.sqrt(np.exp(pars["kernel:k2:k2:metric:log_M_0_0"]))
-        
-        print("\nDerived quantities:")
-        print(f"smooth amplitude        = {amp_smooth:.4f}")
-        print(f"fast amplitude          = {amp_fast:.4f}")
-        #print(f"smooth length-scale     = {ell_smooth:.2f} (fixed)")
-        print(f"fast length-scale       = {ell_fast:.2f}")
-        
-        print("\nScale ratio diagnostics:")
-        print(f"ell_fast / NN           = {ell_fast/NN:.3f}")
-        #print(f"amp_smooth / amp_fast   = {amp_smooth/amp_fast:.3f}")
-        
-        print("\nLikelihood diagnostics:")
-        print(f"log L final             = {-results.fun:.4f}")
-        
-        print("\nParameter bounds check:")
-        print(f"fast length-scale within [1, NN]?  {1 <= ell_fast <= NN}")
-        
-        
-        print("----------------------\n")
 
 
     # --- Decomposition & Prediction ---
@@ -720,4 +541,37 @@ def smooth_gpr_controlled(aa, NN, verbose=False):
     # Restore missing channels to 0 
     y_pred[~m] = 0 
     
-    return y_pred
+    y_res = y_raw - y_pred 
+    y_res_std = np.std(y_res) 
+
+    if verbose == True:
+        
+        pars = dict(zip(gp.get_parameter_names(), gp.get_parameter_vector()))
+
+        # amplitudes (variance scaled)
+        amp_smooth = np.exp(pars["kernel:k1:k1:log_constant"]) * (y_std**2)
+        amp_fast   = np.exp(pars["kernel:k2:k1:log_constant"]) * (y_res_std**2)
+        
+        # length-scale
+        ell_fast = np.exp(0.5 * pars["kernel:k2:k2:metric:log_M_0_0"])
+        
+
+        # --- build summary dict ---
+        fit_summary = {
+            "y_std": y_std,
+            "y_res_std": y_res_std,
+            "amp_smooth": amp_smooth,
+            "amp_fast": amp_fast,
+            "ell_fast": ell_fast,
+            "ell_fast_over_NN": ell_fast / NN,
+            "logL": -results.fun,
+            "success": results.success,
+            "gp_opt_params": gp.get_parameter_vector(),
+            "param_names": gp.get_parameter_names()
+        }
+            
+    if verbose:
+        return y_pred, fit_summary
+    else:
+        return y_pred 
+    # return y_pred
