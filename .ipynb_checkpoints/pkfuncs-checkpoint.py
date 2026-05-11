@@ -149,7 +149,13 @@ def flagdata(nc, mode='PERIODIC', percent=20, seed=None):
         num = int(nc * percent / 100)
         num = min(num, nc)
         flag = rng.choice(nc, size=num, replace=False)
-        index[flag] = 0    
+        index[flag] = 0 
+        
+    else: # if none of the above, then RANDOM. 
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        flag = rng.choice(nc, size=num, replace=False)
+        index[flag] = 0
 
     return index
 
@@ -349,7 +355,7 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50, verbose=False):
             ])            
             
         fields_orig = fields_tota - fields_smth
-        fields_flag = fields_orig * flag
+        fields_flag = fields_orig # * flag
         ml = covtocl_fast(flag, flag)
 
     elif SCF == 'Hann':
@@ -361,17 +367,17 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50, verbose=False):
         # Trim edges
         fields_orig = fields_tota[:, NN:-NN] - fields_smth
         trimmed_flag = flag[NN:-NN]
-        fields_flag = fields_orig * trimmed_flag
+        fields_flag = fields_orig # * trimmed_flag
         ml = covtocl_fast(trimmed_flag, trimmed_flag)
 
     elif SCF == 'None':
         fields_orig = fields_tota
-        fields_flag = fields_orig * flag
+        fields_flag = fields_orig # * flag
         ml = covtocl_fast(flag, flag)
 
     else:
         raise ValueError("SCF must be one of {'GP', 'Hann', 'None'}")
-
+    print(ml.shape)
     return fields_orig, fields_flag, ml
 
 def pk_fft(fields_flag, L, N):
@@ -444,6 +450,138 @@ def save_data(fname_prefix, inp_signal, flag, SCF,
     # print("Saved:", fname)
     return fname
 
+
+def smooth_gpr_controlled_old(aa, NN, verbose=True):
+    x = np.arange(len(aa))[:, None]
+    m = aa != 0
+    y_raw = aa[m]
+
+    # --- Normalize Data ---
+    y_mean = np.mean(y_raw)
+    y_std = np.std(y_raw)
+    y_norm = (y_raw - y_mean) / y_std
+
+    # --- Define Kernels ---
+    # Initial guess: 80% smooth, 20% fast maybe, or just initiate with something
+    initial_amp_smooth = 1
+    initial_amp_fast = 1
+    
+    k_smooth_base = kernels.ExpSquaredKernel(metric=NN**2)
+    k_fast_base   = kernels.Matern32Kernel(metric=1.0**2)
+
+    kernel = initial_amp_smooth * k_smooth_base + initial_amp_fast * k_fast_base 
+
+    # --- Setup GP ---
+    gp = george.GP(kernel, mean=0.0, fit_mean=False) # , white_noise=np.log(0.05**2), fit_white_noise=False)
+    
+    gp.compute(x[m], yerr=1e-5)
+
+    # freeze ONLY smooth length scale
+    for name in gp.get_parameter_names():
+        if "kernel:k1:k2:metric:log_M_0_0" in name:
+            gp.freeze_parameter(name)
+    
+    # ---- bounds ----
+    bounds = []
+    
+    for name in gp.get_parameter_names():
+
+        if "kernel:k2:k2:metric:log_M_0_0" in name:
+            bounds.append((np.log(1.0**2), np.log(NN**2)))
+        else:
+            bounds.append((None, None))
+    
+    # print(bounds)
+    
+    # optimize
+    p0 = gp.get_parameter_vector()
+
+    # -- WRAPPERS FOR SCIPY --
+    # Objective Function (Negative Log Likelihood)
+    def nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        ll = gp.log_likelihood(y_norm, quiet=True)
+        return -ll if np.isfinite(ll) else 1e25
+
+    # Gradient Function (Negative Gradient)
+    def grad_nll(p):
+        gp.set_parameter_vector(p)
+        # Use y_norm here
+        return -gp.grad_log_likelihood(y_norm, quiet=True)
+
+    
+    results = op.minimize(
+        nll,
+        p0,
+        jac=grad_nll,
+        method="L-BFGS-B",
+        bounds=bounds
+    )    
+
+    
+    # Update GP with best parameters
+    gp.set_parameter_vector(results.x)
+
+
+    # --- Decomposition & Prediction ---
+    
+    # Calculate weights based on NORMALIZED data
+    # y_norm needs to be shape (N,), apply_inverse handles the rest
+    weights = gp.solver.apply_inverse(y_norm[:, None])[:, 0]
+    
+    # Extract the Smooth Kernel component
+    k_smooth_fitted = gp.kernel.k1
+    
+    # Project weights using ONLY the smooth kernel
+    # Pass 2D arrays: x (target) and x[m] (source)
+    K_star_smooth = k_smooth_fitted.get_value(x, x[m])
+    # K_star_smooth = k_smooth_fitted.get_value(x, x)
+    
+    # prediction in "normalized units"
+    y_pred_norm = K_star_smooth.dot(weights)
+
+    # --- De-normalize ---
+    # Scale back to original units
+    y_pred = y_pred_norm * y_std + y_mean
+    
+    # Restore missing channels to 0 
+    y_pred[~m] = 0 
+    
+    y_res = y_raw - y_pred 
+    y_res_std = np.std(y_res) 
+
+    if verbose == True:
+        
+        pars = dict(zip(gp.get_parameter_names(), gp.get_parameter_vector()))
+
+        # amplitudes (variance scaled)
+        amp_smooth = np.exp(pars["kernel:k1:k1:log_constant"]) * (y_std**2)
+        amp_fast   = np.exp(pars["kernel:k2:k1:log_constant"]) * (y_res_std**2)
+        
+        # length-scale
+        ell_fast = np.exp(0.5 * pars["kernel:k2:k2:metric:log_M_0_0"])
+        
+
+        # --- build summary dict ---
+        fit_summary = {
+            "y_std": y_std,
+            "y_res_std": y_res_std,
+            "amp_smooth": amp_smooth,
+            "amp_fast": amp_fast,
+            "ell_fast": ell_fast,
+            "ell_fast_over_NN": ell_fast / NN,
+            "logL": -results.fun,
+            "success": results.success,
+            "gp_opt_params": gp.get_parameter_vector(),
+            "param_names": gp.get_parameter_names()
+        }
+            
+    if verbose:
+        return y_pred, fit_summary
+    else:
+        return y_pred 
+    # return y_pred
 
 def smooth_gpr_controlled(aa, NN, verbose=True):
     x = np.arange(len(aa))[:, None]
@@ -541,8 +679,8 @@ def smooth_gpr_controlled(aa, NN, verbose=True):
     # Restore missing channels to 0 
     y_pred[~m] = 0 
     
-    y_res = y_raw - y_pred 
-    y_res_std = np.std(y_res) 
+    y_res = aa - y_pred 
+    y_res_std = np.std(y_res[m]) 
 
     if verbose == True:
         
@@ -575,3 +713,66 @@ def smooth_gpr_controlled(aa, NN, verbose=True):
     else:
         return y_pred 
     # return y_pred
+
+# Fully random cases 
+def process_scf_fullrandom(fields_tota, flag, SCF, NN_gp=96, NN_hann=50, verbose=False):
+
+    if SCF == 'GP':
+        NN = NN_gp
+    
+        if verbose:
+            fields_smth_list = []
+            fit_summaries = []
+    
+            for i, realization in enumerate(fields_tota):
+                y_pred, summary = smooth_gpr_controlled(realization, NN, verbose=verbose)
+    
+                fields_smth_list.append(y_pred)
+    
+                if summary is not None:
+                    summary["realization"] = i
+                    summary["NN"] = NN
+                    fit_summaries.append(summary)
+    
+            fields_smth = np.array(fields_smth_list)
+    
+            # ---- SAVE per NN ----
+
+            save_dir = "gpfit"
+            os.makedirs(save_dir, exist_ok=True)
+            
+            np.savez(
+                os.path.join(save_dir, f"gp_fit_summaries_NN_{NN}.npz"),
+                summaries=np.array(fit_summaries, dtype=object)
+            )
+        else:
+            fields_smth = np.array([
+                smooth_gpr_controlled(realization, NN, verbose=verbose)
+                for realization in fields_tota
+            ])            
+            
+        fields_orig = fields_tota - fields_smth
+        fields_flag = fields_orig * flag
+        ml = covtocl_fast(flag, flag)
+
+    elif SCF == 'Hann':
+        NN = NN_hann
+        fields_smth = np.array([
+            smooth_vcg(realization, NN)
+            for realization in fields_tota
+        ])
+        # Trim edges
+        fields_orig = fields_tota[:, NN:-NN] - fields_smth
+        trimmed_flag = flag[NN:-NN]
+        fields_flag = fields_orig * trimmed_flag
+        ml = covtocl_fast(trimmed_flag, trimmed_flag)
+
+    elif SCF == 'None':
+        fields_orig = fields_tota
+        fields_flag = fields_orig * flag
+        ml = covtocl_fast(flag, flag)
+
+    else:
+        raise ValueError("SCF must be one of {'GP', 'Hann', 'None'}")
+
+    return fields_orig, fields_flag, ml
