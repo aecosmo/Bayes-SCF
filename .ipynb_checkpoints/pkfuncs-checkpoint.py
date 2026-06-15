@@ -151,6 +151,45 @@ def flagdata(nc, mode='PERIODIC', percent=20, seed=None):
         flag = rng.choice(nc, size=num, replace=False)
         index[flag] = 0 
         
+    elif mode == 'BROADBAND10':
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        
+        # flag = rng.choice(nc, size=num, replace=False)
+        index[nc//2-num//2: nc//2+num//2] = 0
+        
+    elif mode == 'BROADBAND3':
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        
+        # flag = rng.choice(nc, size=num, replace=False)
+        index[nc//2-num//2: nc//2+num//2] = 0 
+        
+    elif mode == 'BROADBAND30':
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        
+        # flag = rng.choice(nc, size=num, replace=False)
+        index[nc//2-num//2: nc//2+num//2] = 0 
+        
+    elif mode == 'BROADBAND50':
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        
+        # flag = rng.choice(nc, size=num, replace=False)
+        index[nc//2-num//2: nc//2+num//2] = 0 
+        
+    elif mode == 'BROADBAND80':
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        
+        # flag = rng.choice(nc, size=num, replace=False)
+        index[nc//2-num//2: nc//2+num//2] = 0         
     else: # if none of the above, then RANDOM. 
         num = int(nc * percent / 100)
         num = min(num, nc)
