@@ -183,6 +183,14 @@ def flagdata(nc, mode='PERIODIC', percent=20, seed=None):
         # flag = rng.choice(nc, size=num, replace=False)
         index[nc//2-num//2: nc//2+num//2] = 0 
         
+    elif mode == 'BROADBAND51':
+        
+        num = int(nc * percent / 100)
+        num = min(num, nc)
+        
+        # flag = rng.choice(nc, size=num, replace=False)
+        index[: -num] = 0 
+        
     elif mode == 'BROADBAND80':
         
         num = int(nc * percent / 100)
