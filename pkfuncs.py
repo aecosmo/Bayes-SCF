@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -5,7 +6,9 @@ import scipy
 from scipy.signal import windows
 from scipy.fftpack import fft, ifft, dct, idct
 from scipy import integrate
-import os
+import scipy.optimize as op
+import george
+from george import kernels
 
 # Cosmological parameters: (Planck 2018)
 H0 = 67.66 # km / (Mpc s)
@@ -229,11 +232,6 @@ def draw_field_from_power(P_dft, seed=None):
 
     return np.fft.ifft(fk).real
 
-
-import numpy as np
-import george
-from george import kernels
-
 def generate_gp_realizations(Npoints, amplitude, length_scale, Nreal=1, kernel_type="RBF", sigma=1.0, seed=None):
     # Set the seed if provided
     if seed is not None:
@@ -282,12 +280,60 @@ def smooth_vcg(aa, NW):
     aas[bb==0.] = 0.
     return aas
 
+def bayes_scf(aa, NN, verbose=False): # 
+    x, m = np.arange(len(aa))[:, None], aa != 0
+    y = aa[m]
 
-import numpy as np
-import george
-from george import kernels
-import scipy.optimize as op
+    # --- Setup Kernel & GP ---
+    kernel = 1.0 * kernels.ExpSquaredKernel(NN**2, ndim=1) + 1.0 * kernels.Matern32Kernel(1.0, ndim=1)
+    gp = george.GP(kernel, mean=0.0, fit_mean=False) 
+    gp.compute(x[m])
 
+    # --- Unpack, Freeze, and Bound ---
+    n_amp_s, n_ell_s, n_amp_f, n_ell_f = gp.get_parameter_names()
+    gp.freeze_parameter(n_ell_s)
+    
+    # Active params are [n_amp_s, n_amp_f, n_ell_f]. 
+    bounds = [(None, None), (None, None), (0.0, np.log(NN**2))]
+
+    # --- Optimization ---
+    def nll(p):
+        gp.set_parameter_vector(p)
+        ll = gp.log_likelihood(y, quiet=True)
+        return -ll if np.isfinite(ll) else 1e25
+
+    def grad_nll(p):
+        gp.set_parameter_vector(p)
+        return -gp.grad_log_likelihood(y, quiet=True)
+
+    results = op.minimize(nll, gp.get_parameter_vector(), jac=grad_nll, method="L-BFGS-B", bounds=bounds)    
+    gp.set_parameter_vector(results.x)
+
+    # --- Decomposition & Prediction ---
+    y_pred = gp.kernel.k1.get_value(x, x[m]).dot(gp.solver.apply_inverse(y[:, None])[:, 0])
+    y_pred[~m] = 0 
+
+    # --- Early Exit ---
+    if not verbose:
+        return y_pred 
+
+    # --- Inline Summary ---
+    p_dict = gp.get_parameter_dict(include_frozen=True)
+    ell_fast = np.exp(0.5 * p_dict[n_ell_f])
+
+    fit_summary = {
+        "amp_smooth": np.exp(p_dict[n_amp_s]),
+        "amp_fast":   np.exp(p_dict[n_amp_f]),
+        "ell_smooth": np.exp(0.5 * p_dict[n_ell_s]),
+        "ell_fast":   ell_fast,
+        "ell_fast_over_NN": ell_fast / NN,
+        "y_res_std":  np.std((aa - y_pred)[m]),
+        "logL":       -results.fun,
+        "success":    results.success,
+        "active_param_names": gp.get_parameter_names()
+    }
+    
+    return y_pred, fit_summary
 
 def bin_power_spectrum(n1, nend, k_vals, pk_recovered, P_theory, NB, binn='lin'):
 
@@ -375,7 +421,7 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50, verbose=False):
             fit_summaries = []
     
             for i, realization in enumerate(fields_tota):
-                y_pred, summary = smooth_gpr_controlled(realization, NN, verbose=verbose)
+                y_pred, summary = bayes_scf(realization, NN, verbose=verbose)
     
                 fields_smth_list.append(y_pred)
     
@@ -397,7 +443,7 @@ def process_scf(fields_tota, flag, SCF, NN_gp=96, NN_hann=50, verbose=False):
             )
         else:
             fields_smth = np.array([
-                smooth_gpr_controlled(realization, NN, verbose=verbose)
+                bayes_scf(realization, NN, verbose=verbose)
                 for realization in fields_tota
             ])            
             
@@ -497,6 +543,7 @@ def save_data(fname_prefix, inp_signal, flag, SCF,
     # print("Saved:", fname)
     return fname
 
+"""
 def smooth_gpr_controlled(aa, NN, verbose=True): # bayes_scf
     x = np.arange(len(aa))[:, None]
     m = aa != 0
@@ -628,3 +675,4 @@ def smooth_gpr_controlled(aa, NN, verbose=True): # bayes_scf
         return y_pred 
     # return y_pred
 
+"""
